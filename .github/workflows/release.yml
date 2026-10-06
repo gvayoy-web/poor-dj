@@ -1,0 +1,26 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Verify tag matches package
+        run: node -e "if(process.env.GITHUB_REF_NAME !== 'v'+require('./package.json').version) process.exit(1)"
+      - run: node build.cjs
+      - run: node --check poor-mans-dj.js
+      - run: node --test --test-isolation=none test/*.test.cjs
+      - run: git diff --exit-code -- poor-mans-dj.js
+      - run: node release.cjs
+      - name: Create draft release with verified package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.sha256 --verify-tag --draft --title "POOR DJ $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md

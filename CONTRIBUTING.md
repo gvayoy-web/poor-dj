@@ -1,5 +1,7 @@
 # Contribuir
 
+La participación sigue el [código de conducta](CODE_OF_CONDUCT.md). Las plantillas de issues ayudan a reportar problemas y proponer mejoras.
+
 Modificar `src/`, ejecutar `node build.cjs` y las pruebas del README. Incluir el bundle generado en cada cambio. Las regresiones deben proteger el comportamiento observable, especialmente la prioridad manual y la recuperación de cola.
 
 Para la prueba visual opcional, instalar Playwright en el entorno de desarrollo y tener Edge disponible. La extensión distribuida sigue sin dependencias.

@@ -5,9 +5,9 @@ if(!main.toString().startsWith(`/* POOR DJ ${pkg.version} | MIT */`))throw Error
 if(main.length>150000)throw Error('Extension exceeds 150 KB');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
 for(const key of ['name','description','preview','main','readme'])if(!manifest[key])throw Error('Missing manifest '+key);
-const files=['poor-mans-dj.js','manifest.json','README.md','preview.png','LICENSE','CHANGELOG.md','PUBLISHING.md','VALIDATION.md','CONTRIBUTING.md'];
+const files=['poor-mans-dj.js','manifest.json','README.md','preview.png','LICENSE','CHANGELOG.md','PUBLISHING.md','VALIDATION.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','RELEASE_NOTES.md','assets/mark.svg'];
 const dist=path.join(root,'dist'),stage=path.join(dist,'poor-dj-'+pkg.version);fs.mkdirSync(stage,{recursive:true});
-for(const file of files)fs.copyFileSync(path.join(root,file),path.join(stage,file));
+for(const file of files){fs.mkdirSync(path.dirname(path.join(stage,file)),{recursive:true});fs.copyFileSync(path.join(root,file),path.join(stage,file));}
 const zip=stage+'.zip';
 // Small standard ZIP writer: Node built-ins only, independent of shell modules.
 const crc32=bytes=>{let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;};

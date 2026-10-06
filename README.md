@@ -1,5 +1,9 @@
 # POOR DJ
 
+<img src="assets/mark.svg" width="56" height="56" alt="Símbolo de POOR DJ">
+
+**3.3.0 · MIT · local · sin dependencias adicionales**
+
 **Tu música. Tu mando.** Un DJ local para Spotify con Spicetify. Sigue lo que escuchas, busca canciones y artistas, y propone una mezcla que puedes dirigir por texto.
 
 ![Panel POOR DJ — captura ilustrativa](preview.png)
@@ -36,6 +40,6 @@ node --test --test-isolation=none test/*.test.cjs
 node release.cjs
 ```
 
-La prueba opcional de interfaz requiere Playwright y Microsoft Edge: `node test/ui.smoke.cjs`. Ver [validación](VALIDATION.md), [contribución](CONTRIBUTING.md) y [publicación](PUBLISHING.md).
+La prueba opcional de interfaz requiere Playwright y Microsoft Edge: `node test/ui.smoke.cjs`. Ver [validación](VALIDATION.md), [contribución](CONTRIBUTING.md), [código de conducta](CODE_OF_CONDUCT.md) y [publicación y releases](PUBLISHING.md).
 
 MIT. Proyecto independiente, sin afiliación con Spotify o Spicetify.
