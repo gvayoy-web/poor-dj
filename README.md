@@ -18,7 +18,7 @@ Sin cuentas extra, claves, hosting ni modelos de IA. Las órdenes usan reglas lo
 
 ## Instalar
 
-En Marketplace, busca POOR DJ cuando el repositorio público esté indexado. La publicación está pendiente; el paquete local ya está disponible.
+En Marketplace, busca **POOR DJ** cuando el repositorio público esté indexado. También puedes descargar el ZIP y su SHA-256 desde [Releases](https://github.com/gvayoy-web/poor-dj/releases).
 
 Para instalar manualmente, copia `poor-mans-dj.js` a la carpeta `Extensions` de Spicetify y ejecuta:
 
