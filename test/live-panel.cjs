@@ -1,0 +1,7 @@
+// Opt-in developer regression. Requires Spotify temporarily debugging on localhost.
+// Searches and opens a menu; does not start playback or create playlists.
+const {connect}=require('./cdp.cjs'),assert=require('node:assert/strict');
+(async()=>{const c=await connect();try{
+ const result=await c.evaluate(`(async()=>{const D=PoorDJ;D.open();const panel=document.querySelector('.pd'),input=panel.querySelector('#pd-command');input.value='Omar Courtz';await D.command(input.value);const button=panel.querySelector('[data-mixartist]');if(!button)throw Error('No artist search results');button.click();await new Promise(r=>setTimeout(r,300));const menu=panel.querySelector('[data-artistmenu]');const result={version:D.version,panelConnected:panel.isConnected,buttonConnected:button.isConnected,menuVisible:!menu.hidden,modes:menu.querySelectorAll('[data-artistmode]').length,focus:document.activeElement.dataset.artistmode};panel.querySelector('[data-closeartist]').click();result.returned=panel.isConnected && !panel.querySelector('[data-matches]').hidden;panel.querySelector('[data-closesearch]').click();Spicetify.PopupModal.hide();return result;})()`);
+ assert.equal(result.version,'3.3.0');for(const k of ['panelConnected','buttonConnected','menuVisible','returned'])assert.equal(result[k],true,k);assert.equal(result.modes,2);assert.equal(result.focus,'mix');console.log(JSON.stringify(result));
+ }finally{c.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

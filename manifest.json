@@ -1,0 +1,8 @@
+{
+  "name": "POOR DJ",
+  "description": "Tu música, tu dirección. DJ local con canciones conocidas, órdenes por texto y voz local en español.",
+  "preview": "preview.png",
+  "main": "poor-mans-dj.js",
+  "readme": "README.md",
+  "tags": ["music", "dj", "local", "spanish"]
+}

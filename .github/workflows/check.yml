@@ -1,0 +1,18 @@
+name: Check
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node build.cjs
+      - run: node --check poor-mans-dj.js
+      - run: node --test --test-isolation=none test/*.test.cjs
+      - run: node release.cjs
+      - run: git diff --exit-code -- poor-mans-dj.js

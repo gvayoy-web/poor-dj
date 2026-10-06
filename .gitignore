@@ -1,0 +1,13 @@
+node_modules/
+*.zip
+
+dist/
+live-*.json
+*-performance.json
+
+.codex/
+.agents/
+*.log
+*.bak
+*profile*.json
+*probe*.json
