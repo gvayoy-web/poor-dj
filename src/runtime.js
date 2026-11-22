@@ -1,9 +1,15 @@
 const ICON='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M5 12a7 7 0 0 1 7-7m0 14a7 7 0 0 0 7-7M7 15V9h3"/></svg>';
 const esc=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const imageURL=uri=>uri?.startsWith('spotify:image:')?`https://i.scdn.co/image/${uri.split(':').pop()}`:uri;
+let bootTries=0;
 async function boot(){
   const S=root.Spicetify;
-  if(!S?.Player?.data || !S?.CosmosAsync || !S?.Playbar?.Button || !S?.PopupModal || !S?.Platform?.LocalStorageAPI){setTimeout(boot,500);return;}
+  const needs={'Player':S?.Player?.data,'CosmosAsync':S?.CosmosAsync,'Playbar.Button':S?.Playbar?.Button,'PopupModal':S?.PopupModal,'Platform.LocalStorageAPI':S?.Platform?.LocalStorageAPI};
+  const missing=Object.keys(needs).filter(k=>!needs[k]);
+  if(missing.length){
+    if(++bootTries===120)try{S?.showNotification?.('POOR DJ no pudo iniciarse: tu Spicetify no ofrece '+missing.join(', ')+'. Actualiza Spicetify y reinicia Spotify.',true);}catch(_){}
+    if(bootTries<=120)setTimeout(boot,500);return;
+  }
   if(root.PoorDJ?.version===VERSION)return;
   if(root.PoorMansDJ){S.showNotification?.('POOR DJ: elimina la instalación duplicada y reinicia Spotify.',true);return;}
   const storage=S.Platform.LocalStorageAPI,requests=new RequestCache(),library=new MusicLibrary(S.Platform,requests);
@@ -88,6 +94,13 @@ async function boot(){
     return unique;
   }
   let saved={};try{saved=storage.getItem('poor-dj-v3')||storage.getItem('poor-dj-v2')||storage.getItem('poor-mans-dj-v1')||{};if(!storage.getItem('poor-dj-v3'))storage.setItem('poor-dj-before-v3',saved);}catch(_){}
+  const lyrics=new LyricsProvider({
+    spotify:async(id,track)=>{const img=track.image?imageURL(track.image):'';const base=`https://spclient.wg.spotify.com/color-lyrics/v2/track/${id}`;const q='?format=json&vocalRemoval=false&market=from_token';
+      try{return await S.CosmosAsync.get(img?`${base}/image/${encodeURIComponent(img)}${q}`:base+q);}catch(e){if(img && !/404/.test(String(e?.status||e?.message)))return S.CosmosAsync.get(base+q);throw e;}},
+    external:async track=>{const c=new AbortController(),timer=setTimeout(()=>c.abort(),5000);try{const p=new URLSearchParams({track_name:track.name,artist_name:track.artists[0]?.name||'',album_name:track.album||'',duration:String(Math.round((track.duration||0)/1000))});const r=await fetch('https://lrclib.net/api/get?'+p,{signal:c.signal});if(r.status===404)return null;if(!r.ok)throw Error('LRCLIB '+r.status);return await r.json();}finally{clearTimeout(timer);}},
+    saved:(()=>{try{return storage.getItem('poor-dj-lyrics-misses')||{};}catch(_){return {};}})(),
+    persist:data=>{try{storage.setItem('poor-dj-lyrics-misses',data);}catch(_){}}
+  });
   let view,narrator,voiceGate,internalPlay=false,stopped=false,reconcile=null,progressUI=0;
   const api=()=>typeof S.Platform.PlayerAPI?.play==='function'?S.Platform.PlayerAPI:S.Player.origin;
   async function play(track){
@@ -122,11 +135,11 @@ async function boot(){
   }
   async function createMix(artist,mode,tracks){
     const P=S.Platform;if(!P.RootlistAPI?.createPlaylist || !P.PlaylistAPI?.add || !P.RootlistAPI?.setPublishedState)throw Error('Este cliente no permite guardar una playlist privada.');
-    const name=`POOR DJ · ${artist.name} · ${mode==='only'?'Artista':'Aleatorio'}`;
+    const name=mode==='session'?`POOR DJ · ${artist.name}`:`POOR DJ · ${artist.name} · ${mode==='only'?'Artista':'Aleatorio'}`;
     const pending=storage.getItem('poor-dj-pending-mix'),key=artist.uri+':'+mode;
     const uri=pending?.key===key?pending.uri:await P.RootlistAPI.createPlaylist(name,{after:'end'},true);
     if(!uri?.startsWith('spotify:playlist:'))throw Error('Spotify no confirmó la creación de la playlist.');
-    const planned=mixUris(pending,key,tracks);storage.setItem('poor-dj-pending-mix',{key,uri,name,tracks:planned});
+    const planned=mixUris(pending,key,tracks,mode==='session'?100:24);storage.setItem('poor-dj-pending-mix',{key,uri,name,tracks:planned});
     await P.RootlistAPI.setPublishedState(uri,false);
     const existing=await P.PlaylistAPI.getContents(uri,{offset:0,limit:100}),present=new Set((existing.items||[]).map(t=>t.uri));
     const missing=planned.filter(uri=>!present.has(uri));if(missing.length)await P.PlaylistAPI.add(uri,missing,{after:'end'});
@@ -141,14 +154,15 @@ async function boot(){
   const pauseMusic=typeof S.Platform.PlayerAPI?.pause==='function'?()=>S.Platform.PlayerAPI.pause():typeof S.Player.pause==='function'?()=>S.Player.pause():null;
   const resumeMusic=typeof S.Platform.PlayerAPI?.resume==='function'?()=>S.Platform.PlayerAPI.resume():typeof S.Player.play==='function'?()=>S.Player.play():null;
   voiceGate=new VoiceGate(narrator,{playing:()=>S.Player.isPlaying(),uri:()=>normalize(S.Player.data?.item)?.uri,device:()=>S.Platform.ConnectAPI?.getState()?.activeDevice?.id,pause:pauseMusic?async()=>{await pauseMusic();for(let i=0;i<20 && S.Player.isPlaying();i++)await sleep(50);if(S.Player.isPlaying())throw Error('No se confirmó la pausa');}:null,resume:resumeMusic});
-  engine.onNarrate=event=>voiceGate.run(event,engine.anchor||engine.current,engine.intent,{local:localPlayback()});
+  narrator.prefer(engine.settings.voiceName);
+  engine.onNarrate=event=>{const c=engine.current,seed=event==='next' && c?{...c,evidence:evidenceLabel(knownEvidence(c,engine.memory[c.uri])),plays:engine.memory[c.uri]?.plays||0,minutes:Math.floor(engine.sessionHeardMs/60000),styles:[...(c.styles||[]),...(engine.tags[c.uri]||[])],prevAudio:engine.recent.at(-2)?.audio,hour:new Date().getHours()}:engine.anchor||c;return voiceGate.run(event,seed,engine.intent,{local:localPlayback()});};
   const playGuards=[...new Set([S.Platform.PlayerAPI,S.Player.origin].filter(Boolean))].map(player=>guardPlay(player,()=>{
     if(internalPlay)return null;
     engine.commandGeneration++;engine.choosing=false;engine.commandChoices=[];engine.commandArtists=[];engine.artistMenu=null;voiceGate.cancel();
     return engine.active || engine.managed.length?engine.yieldToUser():null;
   }));
   const recovery=()=>{try{return storage.getItem('poor-dj-volume-recovery');}catch(_){return null;}};
-  view=mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume:()=>{const r=recovery(),device=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;if(r && localPlayback() && (!r.device || r.device===device) && typeof S.Player.setVolume==='function'){S.Player.setVolume(clamp(r.volume,0,1));storage.setItem('poor-dj-volume-recovery',null);engine.notify('Volumen anterior recuperado.');}else engine.notify('Recupera el volumen en el dispositivo original.',true);}});
+  view=mountUI(S,engine,{diagnose:()=>root.PoorDJ.diagnose(),lyrics,audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume:()=>{const r=recovery(),device=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;if(r && localPlayback() && (!r.device || r.device===device) && typeof S.Player.setVolume==='function'){S.Player.setVolume(clamp(r.volume,0,1));storage.setItem('poor-dj-volume-recovery',null);engine.notify('Volumen anterior recuperado.');}else engine.notify('Recupera el volumen en el dispositivo original.',true);}});
   engine.save();
   const sample=()=>{if(stopped || engine.interrupted)return;try{if(!engine.current?.name || !engine.current?.artists.length || !engine.current?.image)observe();engine.sample(S.Player.getProgress(),S.Player.isPlaying());if(Date.now()-progressUI>5000){progressUI=Date.now();view.update();}}catch(_){};};
   const observe=()=>{
@@ -164,12 +178,30 @@ async function boot(){
     const nextDevice=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;
     if(nextDevice!==device){device=nextDevice;voiceGate.cancel();engine.commandGeneration++;if(engine.active)engine.yieldToUser();}
     if(engine.active && !engine.busy && !engine.interrupted){const q=queue();if(q){engine.sync(q);engine.reconcileManual(q);engine.fill(false,q);}}
+    autoFade();
   };
   // Spotify exposes no documented, stable queue event; active-only fallback.
-  engine.onUpdate=()=>{if(engine.active && !reconcile)reconcile=setInterval(reconcileQueue,1000);if(!engine.active && reconcile){clearInterval(reconcile);reconcile=null;}view.update();};
+  // Transición automática: ajusta el solapamiento nativo según la pareja actual → siguiente y lo restaura al terminar.
+  let fadeBusy=false,fadeSeconds=null,fadeWarned=false;
+  async function autoFade(){
+    if(fadeBusy)return;
+    if(!engine.active || !engine.settings.autoFade){if(fadeSeconds!==null){fadeBusy=true;fadeSeconds=null;try{await transitions.restore();}catch(_){}finally{fadeBusy=false;}}return;}
+    const seconds=fadePlan(engine.current?.audio,engine.preview[0]?.audio);
+    if(seconds===null || seconds===fadeSeconds)return;
+    fadeBusy=true;
+    try{await transitions.apply(seconds);fadeSeconds=seconds;}
+    catch(e){fadeSeconds=seconds;if(!fadeWarned){fadeWarned=true;engine.notify('Transición automática no disponible: '+e.message,true);}}
+    finally{fadeBusy=false;}
+  }
+  engine.onUpdate=()=>{if(engine.active && !reconcile)reconcile=setInterval(reconcileQueue,1000);if(!engine.active && reconcile){clearInterval(reconcile);reconcile=null;}autoFade();view.update();};
   observe();
   const unload=()=>voiceGate.cancel();root.addEventListener('beforeunload',unload);
-  root.PoorDJ={engine,open:view.open,version:VERSION,audio,narrator,voiceGate,transitions,command:text=>engine.command(text),dispose:()=>{stopped=true;engine.commandGeneration++;engine.active=false;engine.generation++;engine.cancelLookup?.();clearInterval(reconcile);playGuards.forEach(undo=>undo());voiceGate.cancel();narrator.dispose();audio.dispose();requests.dispose();library.dispose();for(const [event,fn]of [['songchange',observe],['onprogress',sample],['onplaypause',paused]])S.Player.removeEventListener?.(event,fn);root.removeEventListener('beforeunload',unload);view.dispose();}};
+  const diagnose=async()=>{
+    const api={queue:Array.isArray(S.Queue?.nextTracks) && typeof S.addToQueue==='function',play:typeof (S.Platform.PlayerAPI?.play||S.Player.origin?.play)==='function',audio:typeof S.getAudioData==='function',playlists:!!(S.Platform.RootlistAPI?.createPlaylist && S.Platform.PlaylistAPI?.add),voice:!!narrator.voice,lyrics:typeof S.CosmosAsync?.get==='function',spicy:!!root.SpicyLyrics};
+    const [a,b]=await Promise.allSettled([query('searchTracks',{searchTerm:'a',offset:0,limit:1,numberOfTopResults:1,includeAudiobooks:false,includePreReleases:false,includeAlbumPreReleases:false}),query('searchArtists',{searchTerm:'a',offset:0,limit:1,numberOfTopResults:1,includeAudiobooks:false})]);
+    return compatReport({api,probes:{search:a.status==='fulfilled',artists:b.status==='fulfilled'}});
+  };
+  root.PoorDJ={engine,diagnose,open:view.open,version:VERSION,audio,narrator,voiceGate,transitions,command:text=>engine.command(text),dispose:()=>{stopped=true;engine.commandGeneration++;engine.active=false;engine.generation++;engine.cancelLookup?.();clearInterval(reconcile);playGuards.forEach(undo=>undo());voiceGate.cancel();narrator.dispose();audio.dispose();requests.dispose();library.dispose();for(const [event,fn]of [['songchange',observe],['onprogress',sample],['onplaypause',paused]])S.Player.removeEventListener?.(event,fn);root.removeEventListener('beforeunload',unload);view.dispose();}};
   root.PoorMansDJ=root.PoorDJ;
 }
 boot();

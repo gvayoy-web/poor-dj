@@ -4,7 +4,21 @@ function transitionFit(a,b){
   if(loudness!==null){sum+=.2*(1-Math.min(loudness/8,1));weight+=.2;}
   return {value:weight?sum/weight:null,coverage:Math.min(weight,1),tempo:base.tempo,key:base.key,loudness};
 }
-function transitionLabel(a,b){const f=transitionFit(a,b),parts=[];if(f.tempo!==null && f.tempo<=.06)parts.push('tempo cercano');if(f.key!==null && f.key<=1)parts.push('tono compatible');if(f.loudness!==null && f.loudness<=3)parts.push('nivel parecido');return parts.length?'Continuidad: '+parts.join(' · '):'Sin continuidad acústica verificada; se prioriza la referencia.';}
+function transitionLabel(a,b){
+  const f=transitionFit(a,b),parts=[];
+  if(f.tempo!==null && f.tempo<=.06)parts.push('mantiene el pulso');
+  if(f.key!==null && f.key<=1)parts.push('encaja en tono');
+  if(f.loudness!==null && f.loudness<=3)parts.push('suena al mismo nivel');
+  return parts.length?'Transición: '+parts.join(', '):'Sin datos para verificar la transición; se prioriza la referencia.';
+}
+// Segundos de solapamiento recomendados para esta pareja; null si no hay datos suficientes.
+function fadePlan(a,b){
+  const f=transitionFit(a,b);if(f.value===null || f.coverage<.5)return null;
+  if(f.value>=.75 && (f.tempo===null || f.tempo<=.06))return 6;
+  if(f.value>=.55)return 4;
+  if(f.value>=.35)return 2;
+  return 0;
+}
 class NativeTransitions{
   constructor(platform,storage,local){this.platform=platform;this.storage=storage;this.local=local;}
   state(){const s=this.platform.SettingsAPI?.playback;return {enabled:s?.audioCrossfade?.value===true,seconds:Math.round((s?.audioCrossfadeMs?.value||0)/1000),gapless:s?.gapless?.value===true,available:this.local() && typeof s?.audioCrossfade?.setValue==='function' && typeof s?.audioCrossfadeMs?.setValue==='function'};}

@@ -4,5 +4,15 @@
   "preview": "preview.png",
   "main": "poor-mans-dj.js",
   "readme": "README.md",
-  "tags": ["music", "dj", "local", "spanish"]
+  "tags": [
+    "music",
+    "dj",
+    "local",
+    "spanish"
+  ],
+  "authors": [
+    {
+      "name": "KROMBYTE"
+    }
+  ]
 }

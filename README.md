@@ -1,10 +1,10 @@
 # POOR DJ
 
-**3.3.0 · MIT · local · sin dependencias adicionales**
+**Hecho por KROMBYTE · 3.4.0 · MIT · local · sin dependencias adicionales**
 
 **Tu música. Tu mando.** Un DJ local para Spotify con Spicetify. Sigue lo que escuchas, busca canciones y artistas, y propone una mezcla que puedes dirigir por texto.
 
-![POOR DJ 3.3.0: selección de música conocida](preview.png)
+![POOR DJ 3.4.0: selección de música conocida](preview.png)
 
 Vista de la interfaz actual con datos de demostración. No es una captura de una cuenta de Spotify.
 
@@ -12,7 +12,8 @@ Vista de la interfaz actual con datos de demostración. No es una captura de una
 - **Artistas:** Aleatorio combina mucho de ese artista con música afín; Artista usa únicamente su catálogo y colaboraciones. Guarda una playlist privada.
 - **Tú decides:** tu elección manual pausa el DJ; terminar devuelve la cola suspendida. Puedes descartar propuestas y cambiar la dirección.
 - **Voz local y subtítulos:** comentarios breves en español. La música espera mientras habla; si el cliente no ofrece voz, continúa normalmente.
-- **A tu gusto:** acentos, panel compacto y continuidad musical con transiciones nativas de Spotify.
+- **Letras sincronizadas:** pestaña *Letras* estilo karaoke con la línea actual resaltada, toque para saltar a esa línea, ajuste de desfase, tres tamaños y pantalla completa.
+- **A tu gusto:** pocos ajustes a la vista (voz, frecuencia del DJ, canciones pendientes y color); lo demás está en *Avanzado*.
 
 ## Qué puedes hacer
 
@@ -64,11 +65,39 @@ Una reproducción elegida manualmente pausa el DJ y retira sus propuestas. Suspe
 - **Presentación:** verde Spotify, colores del tema, azul, violeta o rosa; control compacto y panel compacto.
 - **Preferencias:** entre una y tres canciones pendientes, contenido explícito y aprendizaje de la escucha configurables.
 
+### Letras
+
+La pestaña **Letras** usa primero las letras que el cliente de Spotify ofrece a tu sesión (sincronizadas por línea cuando existen). Toca una línea para saltar a ese momento; si al desplazarte manualmente quieres volver, usa **Volver a la línea actual**. El ajuste ± mueve la sincronía en pasos de 0,25 s. **Aa** cambia el tamaño y ⛶ abre pantalla completa.
+
+La búsqueda en **LRCLIB** está **apagada por defecto** (Ajustes → Letras y ambiente). Si la activas, cuando Spotify no tiene letra se envían título, artista, álbum y duración a lrclib.net. El texto de las letras no se guarda; solo se recuerdan, 24 h, las canciones sin letra.
+
+**En el escritorio:** el botón *Letras · POOR DJ* de la barra de reproducción (o «Abrir letras en la ventana» en el panel) abre la ruta `/PoorDJ`, con la letra grande; vuelve con *Cerrar letras*.
+
+**Con Spicy Lyrics:** si está instalado, POOR DJ **cede las letras**: oculta su pestaña, su página y sus ajustes de letras, y el panel muestra un botón *Letras ↗* que abre Spicy Lyrics. Así cada extensión hace lo suyo: Spicy Lyrics las letras (palabra por palabra, fondos, romanización) y POOR DJ la sesión y la voz. Cuando el DJ habla con el panel cerrado, aparece su subtítulo sobre cualquier vista, incluida la de Spicy Lyrics. POOR DJ es MIT y Spicy Lyrics AGPL-3.0, por eso no comparten código ni su servicio.
+
+### Voz del DJ
+
+El DJ habla como una pista más: mientras comenta, la tarjeta de «Sonando ahora» pasa a **DJ POOR** y muestra lo que dice. El saludo inicial es «¡Hola! Soy DJ POOR…». Los comentarios son **inteligentes con datos reales, sin IA**: según el *ánimo* (melancólica, tranquila, animada o intensa, estimado solo con el tempo y el tono que mide Spotify), un **cambio de ambiente** respecto a la canción anterior («Cambiamos de ambiente: ahora algo más melancólico») y el **estilo que tú declaraste** en tus etiquetas (reggaetón, salsa, jazz…). Sin datos acústicos o sin etiquetas, no inventa ni ánimo ni género. Además de la orientación inicial, cada 3 o 5 canciones (a tu elección) presenta la que suena: título, artista y de dónde viene en tu música («Viene de tu playlist»). La música espera mientras habla.
+
+En **Ajustes → Voz del DJ** eliges entre *Automática*, *Sin voz (solo subtítulos)* y las voces en español de tu cliente, ordenadas por calidad probable; al elegir una, el DJ la prueba con una frase. *Automática* usa solo voces locales; las voces «en línea» (por ejemplo las *Natural* de Microsoft, cuando el cliente las ofrece) solo se usan si las eliges, y envían el texto del comentario a su proveedor. No hay claves ni servicios propios.
+
+### Transiciones
+
+El DJ ordena la cola como un set: puntúa tempo (también mitad y doble), tono y nivel, y penaliza los saltos bruscos de ritmo o de volumen y la repetición de artistas. Cada sugerencia explica su transición en claro («mantiene el pulso, encaja en tono, suena al mismo nivel»). Con **Avanzado → Transición automática**, el solapamiento nativo de Spotify se ajusta de 0 a 6 s según lo bien que encajen la canción actual y la siguiente, y se restaura al terminar la sesión. Sin datos acústicos, no cambia nada.
+
+### Compatibilidad y sesión
+
+**Avanzado → Comprobar compatibilidad** prueba qué responde en tu cliente (cola, reproducción, búsquedas, datos acústicos, playlists, voz y letras) y señala lo que Spotify pudo haber cambiado. **Guardar sesión como playlist** crea una playlist privada con las canciones únicas de la sesión (hasta 100). Los comentarios «Ahora suena…» usan solo tu historial local: veces escuchada y minutos de sesión.
+
+### Otras mejoras de 3.4
+
+Reproductor con anterior / pausa / siguiente y barra de progreso con salto, ambiente con el color de la portada, y **temporizador** para terminar el DJ a los 15, 30, 60 o 120 minutos.
+
 ### Biblioteca y datos locales
 
 **Mi biblioteca y fuentes** permite actualizar Me gusta y playlists, y seleccionar una playlist para leer hasta 300 canciones. La familiaridad distingue playlist, escucha registrada y votos; Spotify no proporciona aquí todo tu historial ni estadísticas completas.
 
-En **Mis datos** puedes exportar e importar el perfil, guardar la sesión, borrar el aprendizaje o vaciar la caché acústica. El perfil y la lógica del DJ permanecen en el cliente. Las búsquedas y consultas musicales usan tu sesión de Spotify.
+En **Mis datos** puedes exportar e importar el perfil, guardar la sesión como playlist privada, borrar el aprendizaje o vaciar la caché acústica. El perfil y la lógica del DJ permanecen en el cliente. Las búsquedas y consultas musicales usan tu sesión de Spotify.
 
 ## Requisitos y límites
 

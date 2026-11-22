@@ -1,4 +1,6 @@
-# POOR DJ 3.3.0 · Tu música. Tu mando.
+# POOR DJ 3.4.0 · Tu música. Tu mando.
+
+Novedades: pestaña Letras sincronizadas (Spotify, con respaldo LRCLIB opcional), diseño con color de portada, transporte con progreso y temporizador. Detalles en CHANGELOG.md.
 
 - El menú de artista conserva el panel abierto y el foco del teclado.
 - Interfaz compacta con identidad propia, resultados en filas y ajustes agrupados.

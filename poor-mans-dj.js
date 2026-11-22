@@ -1,4 +1,4 @@
-/* POOR DJ 3.3.0 | MIT */
+/* POOR DJ 3.4.0 | MIT */
 (function(root){
 'use strict';
 // Acoustic data is optional. Missing fields never become fabricated measurements.
@@ -100,7 +100,7 @@ class RequestCache{
   dispose(){this.disposed=true;this.cache.clear();for(const job of this.waiting.splice(0))job.reject(Error('Fuente cerrada'));}
 }
 
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 const clamp = (n, a = 0, b = 100) => Math.min(b, Math.max(a, Number(n) || 0));
 const valid = uri => /^spotify:track:[A-Za-z0-9]{22}$/.test(uri || '');
 const unwrap = x => x?.contextTrack || x?.track?.data || x?.track || x?.item?.data || x?.item || x;
@@ -129,13 +129,17 @@ function collect(data, source) {
   }
   walk(data,0); return [...found.values()];
 }
-const DEFAULTS={discovery:0,diversity:25,takeover:false,queueSize:1,accent:'spotify',compact:false,mini:true,explicit:true,autoLearn:true,continuity:65,flowStrength:65,voice:true};
+const DEFAULTS={discovery:0,diversity:25,takeover:false,queueSize:1,accent:'spotify',compact:false,mini:true,explicit:true,autoLearn:true,continuity:65,flowStrength:65,voice:true,lyrics:true,lyricsExternal:false,lyricsSize:'m',lyricsOffset:0,ambient:true,talk:'few',voiceName:'',autoFade:false};
 function settingsOf(value={}){
   const s=Object.fromEntries(Object.entries(DEFAULTS).map(([key,def])=>[key,value[key]??def]));
   if(!['spotify','theme','blue','violet','rose'].includes(s.accent))s.accent='spotify';
   for(const key of ['discovery','diversity','continuity','flowStrength'])s[key]=clamp(s[key]);
   s.queueSize=Math.round(clamp(s.queueSize,1,3));
-  for(const key of ['takeover','compact','mini','explicit','autoLearn','voice'])if(typeof s[key]!=='boolean')s[key]=DEFAULTS[key];
+  if(!['s','m','l'].includes(s.lyricsSize))s.lyricsSize='m';
+  if(!['start','few','often'].includes(s.talk))s.talk='few';
+  s.voiceName=typeof s.voiceName==='string'?s.voiceName.slice(0,120):'';
+  s.lyricsOffset=Math.round(clamp(s.lyricsOffset,-3000,3000)/50)*50;
+  for(const key of ['takeover','compact','mini','explicit','autoLearn','voice','lyrics','lyricsExternal','ambient','autoFade'])if(typeof s[key]!=='boolean')s[key]=DEFAULTS[key];
   return s;
 }
 const reference = t => ({uri:t.uri,uid:t.uid});
@@ -212,6 +216,18 @@ class Engine {
       this.captured=false;this.sessionExcluded.clear();this.artistExcluded.clear();this.save();
     }catch(e){this.notify(`No pude restaurar toda la cola: ${e.message}`,true);this.save();}
     finally{this.busy=false;this.onUpdate();}
+  }
+  async saveSession(){
+    const tracks=[...new Map(this.sessionList.filter(t=>valid(t.uri)).map(t=>[t.uri,t])).values()];
+    if(tracks.length<2){this.notify('Aún hay pocas canciones para guardar la sesión.',true);return;}
+    if(!this.io.createMix){this.notify('Este cliente no permite guardar playlists.',true);return;}
+    this.sessionStamp||=Date.now();
+    try{this.notify('Guardando la sesión como playlist privada…');
+      const label=new Date(this.sessionStamp).toLocaleDateString('es',{day:'numeric',month:'short'})+' '+new Date(this.sessionStamp).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
+      const saved=await this.io.createMix({uri:'session:'+this.sessionStamp,name:'Sesión '+label},'session',tracks);
+      this.mixPlaylist=saved;this.sessionStamp=null;this.save();this.notify('Sesión guardada: '+saved.name);
+    }catch(e){this.notify(e.message||'No pude guardar la sesión.',true);}
+    finally{this.onUpdate();}
   }
   updateSettings(patch,rebuild=true){
     const old=this.settings;this.settings=settingsOf({...old,...patch});
@@ -299,7 +315,7 @@ class Engine {
       const m=this.memory[track.uri] ||= {plays:0,vote:0,heard:0};
       m.track={uri:track.uri,name:track.name,artists:track.artists,image:track.image||'',duration:track.duration||0,explicit:!!track.explicit};
       track.artists.forEach(a=>this.artistSet.add(artistKey(a)));this.sessionList.push({...track});this.sessionList=this.sessionList.slice(-100);
-      if(this.played%4===0)this.onNarrate('block');
+      const every={few:5,often:3}[this.settings.talk];if(every && this.played%every===0)this.onNarrate('next');
       this.managed=this.managed.filter(t=>t.uri!==track.uri);this.preview=this.preview.filter(t=>t.uri!==track.uri);this.save();
       this.generation++;this.lastAttempt=0;this.fill();
     }
@@ -315,6 +331,9 @@ class Engine {
     recent.slice(-4).forEach(r=>{if(r.artists.some(a=>keys.has(artistKey(a))))score-=this.settings.diversity*.025;});
     const from=recent.at(-1)||this.current,comp=transitionFit(from?.audio,t.audio);
     if(comp.value!==null)score+=(comp.value-.5)*this.settings.flowStrength*.6*comp.coverage;
+    // Forma de set: se evitan saltos bruscos de ritmo (más allá de mitad/doble) y de nivel.
+    if(comp.tempo!==null && comp.tempo>.25)score-=10*this.settings.flowStrength/65;
+    if(comp.loudness!==null && comp.loudness>8)score-=6*this.settings.flowStrength/65;
     return score;
   }
   reason(t,from){
@@ -731,7 +750,7 @@ function collectArtists(data){
   };walk(data);return [...found.values()].slice(0,6);
 }
 const hasArtist=(track,artist)=>!!artist && track?.artists?.some(a=>a.uri && artist.uri?a.uri===artist.uri:words(a.name)===words(artist.name));
-const mixUris=(pending,key,tracks)=>[...new Set((pending?.key===key && Array.isArray(pending.tracks)?pending.tracks:tracks.map(t=>t.uri)).filter(valid))].slice(0,24);
+const mixUris=(pending,key,tracks,limit=24)=>[...new Set((pending?.key===key && Array.isArray(pending.tracks)?pending.tracks:tracks.map(t=>t.uri)).filter(valid))].slice(0,limit);
 function artistChoice(ranked,recent,intent){
   if(!intent.artist || intent.artistMode!=='mix')return null;
   let streak=0;for(let i=recent.length-1;i>=0 && hasArtist(recent[i],intent.artist);i--)streak++;
@@ -745,7 +764,21 @@ function transitionFit(a,b){
   if(loudness!==null){sum+=.2*(1-Math.min(loudness/8,1));weight+=.2;}
   return {value:weight?sum/weight:null,coverage:Math.min(weight,1),tempo:base.tempo,key:base.key,loudness};
 }
-function transitionLabel(a,b){const f=transitionFit(a,b),parts=[];if(f.tempo!==null && f.tempo<=.06)parts.push('tempo cercano');if(f.key!==null && f.key<=1)parts.push('tono compatible');if(f.loudness!==null && f.loudness<=3)parts.push('nivel parecido');return parts.length?'Continuidad: '+parts.join(' · '):'Sin continuidad acústica verificada; se prioriza la referencia.';}
+function transitionLabel(a,b){
+  const f=transitionFit(a,b),parts=[];
+  if(f.tempo!==null && f.tempo<=.06)parts.push('mantiene el pulso');
+  if(f.key!==null && f.key<=1)parts.push('encaja en tono');
+  if(f.loudness!==null && f.loudness<=3)parts.push('suena al mismo nivel');
+  return parts.length?'Transición: '+parts.join(', '):'Sin datos para verificar la transición; se prioriza la referencia.';
+}
+// Segundos de solapamiento recomendados para esta pareja; null si no hay datos suficientes.
+function fadePlan(a,b){
+  const f=transitionFit(a,b);if(f.value===null || f.coverage<.5)return null;
+  if(f.value>=.75 && (f.tempo===null || f.tempo<=.06))return 6;
+  if(f.value>=.55)return 4;
+  if(f.value>=.35)return 2;
+  return 0;
+}
 class NativeTransitions{
   constructor(platform,storage,local){this.platform=platform;this.storage=storage;this.local=local;}
   state(){const s=this.platform.SettingsAPI?.playback;return {enabled:s?.audioCrossfade?.value===true,seconds:Math.round((s?.audioCrossfadeMs?.value||0)/1000),gapless:s?.gapless?.value===true,available:this.local() && typeof s?.audioCrossfade?.setValue==='function' && typeof s?.audioCrossfadeMs?.setValue==='function'};}
@@ -762,11 +795,49 @@ class NativeTransitions{
   async restore(){const r=this.storage.getItem('poor-dj-transition-recovery');if(!r)return;if(!this.state().available)throw Error('Vuelve al dispositivo local para restaurar.');const s=this.platform.SettingsAPI.playback;await s.audioCrossfadeMs.setValue(r.ms);await s.audioCrossfade.setValue(r.enabled);await this.refresh();if(s.audioCrossfade.value!==r.enabled || s.audioCrossfadeMs.value!==r.ms)throw Error('Spotify no confirmó la restauración.');this.storage.setItem('poor-dj-transition-recovery',null);}
 }
 
+// Ánimo estimado solo con tempo, tono y nivel medidos; nunca con géneros supuestos.
+function moodOf(audio){
+  if(!audio || !Number.isFinite(audio.bpm) || !Number.isInteger(audio.mode))return null;
+  const slow=audio.bpm<100,fast=audio.bpm>=122,loud=Number.isFinite(audio.loudness) && audio.loudness>-6;
+  if(audio.mode===0 && slow)return 'melancolica';
+  if(slow && (audio.mode===1 || (Number.isFinite(audio.loudness) && audio.loudness<-12)))return 'tranquila';
+  if(fast && (loud || audio.bpm>=138))return 'intensa';
+  if(audio.mode===1 && fast)return 'animada';
+  return null;
+}
+const MOODS={
+  melancolica:{lead:['Un momento más sentimental.','Bajamos un poco la luz.','Toca algo con aire melancólico.'],now:'más melancólico',basis:true},
+  tranquila:{lead:['Bajamos las revoluciones.','Un respiro.','Ahora, algo para ir con calma.'],now:'más tranquilo',basis:true},
+  animada:{lead:['Subimos el ánimo.','Esta trae buena energía.','Arriba ese ánimo.'],now:'más animado',basis:true},
+  intensa:{lead:['Ahora sí, a subir la energía.','Con fuerza.','Prepárate, que esta pega.'],now:'con más intensidad',basis:true}
+};
+// Líneas por estilo: solo se usan si tú declaraste ese estilo en tus etiquetas.
+const GENRE_LINES={reggaeton:['Para el perreo.','Sube el flow.'],trap:['Bajos y rimas.','Para subir el volumen.'],rap:['Rimas con carácter.','Atento a la letra.'],hiphop:['Ritmo y rimas.','Del hip hop que te gusta.'],pop:['Pop para cantar.','Un coro para el recuerdo.'],rock:['Guitarras al frente.','Para dejar el volumen alto.'],electronica:['Para la pista de baile.','Pulso electrónico.'],jazz:['Jazz para escuchar con calma.','Con mucho oficio.'],salsa:['Para mover los pies.','Sabor de salsa.'],bachata:['Una de corazón.','Bachata para sentir.'],alabanzas:['Un momento de alabanza.','Para elevar el ánimo.'],gospel:['Para elevar el ánimo.','Voces con fuerza.'],ambient:['Para dejar volar la mente.','Un paisaje sonoro.'],lofi:['Para concentrarte.','Lo-fi sin prisa.']};
+function intro(seed,sequence){
+  const n=Math.abs(Math.floor(sequence)),pick=list=>list[n%list.length];
+  const title=String(seed?.name||'esta canción').replace(/\s*[(\[][^)\]]*[)\]]/g,'').trim()||'esta canción',artist=seed?.artists?.[0]?.name||'',by=artist?`, de ${artist}`:'';
+  const heads=[`Ahora suena ${title}${by}.`,`Esto es ${title}${by}.`,`Sigue ${title}${by}.`,`Llega ${title}${by}.`,`Es el turno de ${title}${by}.`];
+  const mood=moodOf(seed?.audio),before=moodOf(seed?.prevAudio),style=(seed?.styles||[]).map(words).find(x=>GENRE_LINES[x]);
+  let lead='';
+  if(mood && before && mood!==before)lead=`Cambiamos de ambiente: ahora algo ${MOODS[mood].now}.`;
+  else if(mood)lead=pick(MOODS[mood].lead);
+  else if(Number.isFinite(seed?.hour) && (seed.hour>=22 || seed.hour<5))lead='Para esta hora de la noche.';
+  const tail=[];
+  if(style)tail.push(pick(GENRE_LINES[style]));
+  if(mood && seed.audio)tail.push(`Va a unos ${Math.round(seed.audio.bpm)} bpm y en tono ${seed.audio.mode===1?'mayor':'menor'}.`);
+  if(seed?.evidence)tail.push(`Viene de ${seed.evidence.toLowerCase()}.`);
+  if(seed?.plays>=3)tail.push(`La has escuchado ${seed.plays} veces.`);
+  if(seed?.minutes>=20)tail.push(`Llevas ${seed.minutes} minutos de sesión.`);
+  if(!tail.length)tail.push('Encaja con lo que traes.','Va con el ritmo de la sesión.','Conecta bien con la anterior.');
+  // Una sola frase de cierre, rotando entre las que de verdad aplican.
+  return [lead,heads[n%heads.length],tail[n%tail.length]].filter(Boolean).join(' ');
+}
 function commentary(event,seed,intent,sequence=0){
+  if(event==='next')return intro(seed,sequence);
   const title=songKey(seed?.name||'esta canción'),artist=intent.artist?.name||seed?.artists?.[0]?.name||'tu referencia';
   const direction=intent.styles.length?intent.styles.map(t=>STYLE_NAMES[words(t)]||t).join(' y '):intent.artistMode==='only'?'solo '+artist:intent.artistMode==='mix'?'la música de '+artist:'el sonido de '+artist;
   const intros=event==='start'?[
-    `Tomamos ${title} como referencia.`,`El punto de partida es ${title}.`,`Nos guiamos por ${title}.`,`Arrancamos alrededor de ${title}.`,`La referencia de esta sesión es ${title}.`,`Empezamos desde ${title}.`
+    `¡Hola! Soy DJ POOR. Hoy empiezo con ${direction}.`,`Tomamos ${title} como referencia.`,`El punto de partida es ${title}.`,`Nos guiamos por ${title}.`,`Arrancamos alrededor de ${title}.`,`La referencia de esta sesión es ${title}.`,`Empezamos desde ${title}.`
   ]:event==='direction'?[
     `La dirección es ${direction}.`,`Nos guiamos por ${direction}.`,`Seguimos con ${direction}.`,`Tu rumbo queda claro: ${direction}.`,`La referencia mantiene ${direction}.`,`Trabajamos con ${direction}.`
   ]:[`Seguimos con ${direction}.`,`Mantenemos ${direction} como guía.`,`El hilo sigue siendo ${direction}.`,`Nos quedamos cerca de ${direction}.`,`La sesión continúa con ${direction}.`,`Conservamos ${direction} como referencia.`];
@@ -776,11 +847,15 @@ function commentary(event,seed,intent,sequence=0){
   return `${intros[n%intros.length]} ${middles[Math.floor(n/6)%middles.length]} ${endings[Math.floor(n/42)%endings.length]}`.split(/\s+/).slice(0,25).join(' ');
 }
 class Narrator{
-  constructor(host,changed=()=>{}){this.host=host;this.changed=changed;this.enabled=true;this.voice=null;this.text='';this.sequence=Math.floor(Math.random()*10000);this.recent=[];this.disposed=false;this.detect=this.detect.bind(this);host.speechSynthesis?.addEventListener?.('voiceschanged',this.detect);this.detect();}
-  detect(){if(this.voice || this.disposed)return;let voices=[];try{voices=this.host.speechSynthesis?.getVoices?.()||[];}catch(_){}const local=voices.filter(v=>v.localService===true && /^es(?:-|$)/i.test(v.lang));this.voice=local.find(v=>/sabina/i.test(v.name) && /^es-MX$/i.test(v.lang))||local.find(v=>/^es-MX$/i.test(v.lang))||local[0]||null;this.changed();}
+  constructor(host,changed=()=>{}){this.host=host;this.changed=changed;this.enabled=true;this.voice=null;this.preferred='';this.text='';this.sequence=Math.floor(Math.random()*10000);this.recent=[];this.disposed=false;this.onVoices=()=>this.detect();host.speechSynthesis?.addEventListener?.('voiceschanged',this.onVoices);this.detect();}
+  // Voces en español ordenadas por calidad probable: naturales/neuronales, México y Latinoamérica primero.
+  voices(){let all=[];try{all=this.host.speechSynthesis?.getVoices?.()||[];}catch(_){}const score=v=>(/natural|neural/i.test(v.name)?4:0)+(/^es-MX$/i.test(v.lang)?3:/^es-(US|419)$/i.test(v.lang)?2:/^es-ES$/i.test(v.lang)?1:0)+(/sabina|dalia|paloma|livia/i.test(v.name)?1:0);return all.filter(v=>/^es(?:-|$)/i.test(v.lang)).sort((a,b)=>score(b)-score(a));}
+  // Automático usa solo voces locales; una voz «en línea» se usa únicamente si la eliges tú.
+  detect(force){if((this.voice && !force) || this.disposed)return;const all=this.voices();this.voice=(this.preferred&&all.find(v=>v.name===this.preferred))||all.find(v=>v.localService===true)||null;this.changed();}
+  prefer(name){this.preferred=name||'';this.detect(true);}
   canSpeak(local=true){return !this.disposed && this.enabled && !!this.voice && local && !!this.host.SpeechSynthesisUtterance;}
   say(event,seed,intent,local=true){
-    if(this.disposed)return Promise.resolve({cancelled:true});this.cancel();for(let tries=0;tries<20;tries++){this.text=commentary(event,seed,intent,this.sequence++);if(!this.recent.includes(this.text))break;}this.recent.push(this.text);this.recent=this.recent.slice(-20);this.changed();
+    if(this.disposed)return Promise.resolve({cancelled:true});this.cancel();for(let tries=0;tries<20;tries++){this.text=commentary(event,seed,intent,this.sequence++);if(!this.recent.includes(this.text))break;}this.textAt=Date.now();this.recent.push(this.text);this.recent=this.recent.slice(-20);this.changed();
     if(!this.canSpeak(local))return Promise.resolve({spoken:false});
     const utterance=new this.host.SpeechSynthesisUtterance(this.text);utterance.voice=this.voice;utterance.lang=this.voice.lang;utterance.rate=this.rate||.96;utterance.pitch=1.02;utterance.volume=1;
     return new Promise(resolve=>{
@@ -793,7 +868,7 @@ class Narrator{
   }
   cancel(){this.finish?.({cancelled:true});try{this.host.speechSynthesis?.cancel?.();}catch(_){} }
   toggle(){this.enabled=!this.enabled;if(!this.enabled){this.finish?.({spoken:false});try{this.host.speechSynthesis?.cancel?.();}catch(_){}}this.changed();return this.enabled;}
-  dispose(){this.disposed=true;this.cancel();this.host.speechSynthesis?.removeEventListener?.('voiceschanged',this.detect);}
+  dispose(){this.disposed=true;this.cancel();this.host.speechSynthesis?.removeEventListener?.('voiceschanged',this.onVoices);}
 }
 // A narration owns only its own pause. User playback, devices and stop revoke it.
 class VoiceGate{
@@ -852,9 +927,95 @@ function guardPlay(api,onRequest){
   return ()=>{if(api.play===guarded)api.play=original;};
 }
 
-if(typeof module!=='undefined' && module.exports){module.exports={Engine,normalize,compatibility,settingsOf,AudioLibrary,RequestCache,sameEntry,affinityPool,guardPlay,parseCommand,intentOf,intentLabels,knownEvidence,migrateProfile,ChoiceDeck,Narrator,VoiceGate,MusicLibrary,isKnown,collectArtists,hasArtist,mixUris,artistChoice,transitionFit,transitionLabel,NativeTransitions,commentary,contextKey,words,songKey,queryDefinition};return;}
-const CSS=".pd,.pd-mini{--pd-accent:#1ed760;--pd-ink:#000;--pd-bg:var(--spice-main,#121212);--pd-text:var(--spice-text,#fff);--pd-sub:var(--spice-subtext,#b3b3b3);color:var(--pd-text);font-family:inherit;box-sizing:border-box}\n.pd[data-accent=theme],.pd-mini[data-accent=theme]{--pd-accent:var(--spice-button,#1ed760)}\n.pd[data-accent=blue],.pd-mini[data-accent=blue]{--pd-accent:#74b9ff}.pd[data-accent=violet],.pd-mini[data-accent=violet]{--pd-accent:#c4a3ff}.pd[data-accent=rose],.pd-mini[data-accent=rose]{--pd-accent:#ff9cbd}\n.pd{background:var(--pd-bg);padding:24px;width:100%;max-width:700px;border-radius:8px;font-size:14px;line-height:1.5}.pd *{box-sizing:border-box}.pd button,.pd input,.pd select{font:inherit}.pd button{cursor:pointer;color:inherit}.pd button:disabled{opacity:.5;cursor:wait}.pd button:focus-visible,.pd input:focus-visible,.pd select:focus-visible,.pd summary:focus-visible{outline:2px solid var(--pd-accent);outline-offset:3px}.pd [hidden],.pd-mini[hidden]{display:none!important}\n.pd-header,.pd-brand,.pd-queuehead,.pd-feedback{display:flex;align-items:center;gap:12px}.pd-header{justify-content:space-between}.pd-brand>svg{color:var(--pd-accent);width:24px;height:24px}.pd h1{font-size:22px;letter-spacing:-.5px;font-weight:750;margin:0}.pd h1 small{font-size:11px;color:var(--pd-sub);font-weight:400;margin-left:5px}.pd-live{font-size:12px;color:var(--pd-sub)}.pd-live.pd-active{color:var(--pd-accent)}.pd-live.pd-active:before{content:'●';padding-right:6px}.pd-intro,.pd-explanation,.pd-note{color:var(--pd-sub);font-size:12px;margin:8px 0 18px}\n.pd-playing{display:flex;align-items:center;gap:12px;padding:12px;background:var(--spice-card,#181818);border-radius:6px;margin-bottom:18px}.pd-cover{height:56px;width:56px;position:relative;display:grid;place-items:center;background:var(--spice-highlight,#282828);border-radius:4px;flex-shrink:0;overflow:hidden}.pd-cover img{position:absolute;width:100%;height:100%;object-fit:cover}.pd-playing>div:last-child{min-width:0}.pd-playing small{font-size:11px;color:var(--pd-sub)}.pd h2{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:1px 0;font-weight:650}.pd-playing p{font-size:12px;color:var(--pd-sub);margin:0}\n.pd-feedback{margin:18px 0;padding-bottom:18px;border-bottom:1px solid var(--spice-highlight,#282828)}.pd-feedback>span{margin-right:auto;color:var(--pd-sub);font-size:12px}.pd-feedback button,.pd-profile button,.pd-details button{background:none;border:1px solid var(--spice-button-disabled,#666);border-radius:20px;font-size:11px;font-weight:600;padding:6px 12px}.pd-feedback button:hover,.pd-profile button:hover,.pd-details button:hover{border-color:var(--pd-text)}\n.pd-queuehead{margin-bottom:7px}.pd h3{font-size:14px;margin:0;flex:1}.pd-queuehead small{font-size:11px;color:var(--pd-sub)}.pd-queuehead button,.pd-next>button{background:none;border:0;font-size:22px;color:var(--pd-sub);border-radius:50%;width:30px;height:30px;line-height:1}.pd-queuehead button:hover,.pd-next>button:hover{color:var(--pd-text);background:var(--spice-highlight,#282828)}.pd-next{display:flex;align-items:center;gap:12px;padding:9px 4px;border-radius:4px}.pd-next:hover{background:var(--spice-highlight,#242424)}.pd-index{color:var(--pd-sub);font-size:12px;width:12px;text-align:right}.pd-next>div{flex:1;min-width:0}.pd-next b{display:block;font-size:12px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.pd-next small{display:block;font-size:11px;color:var(--pd-sub);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.pd-empty{font-size:12px;color:var(--pd-sub);padding:12px 0;margin:0 0 12px}\n.pd-primary{display:block;width:100%;background:var(--pd-accent);color:var(--pd-ink)!important;border:0;border-radius:24px;padding:11px;margin-top:16px;font-size:14px;font-weight:700}.pd-primary:hover{filter:brightness(1.06)}.pd-status{font-size:11px;color:var(--pd-sub);margin:10px 0;line-height:1.5}.pd-error{color:#ffa59c}.pd-link{border:0;background:none;text-decoration:underline;color:var(--pd-sub);font-size:12px}.pd-details{border-top:1px solid var(--spice-highlight,#282828);padding:11px 0;font-size:12px;color:var(--pd-sub)}.pd-details summary{cursor:pointer;color:var(--pd-text);font-size:12px;font-weight:600}.pd-details p{margin:10px 0;line-height:1.6}.pd-details a{display:inline-block;color:var(--pd-text);margin:10px 0 0 10px;font-size:11px}.pd-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:13px 0}.pd-options label{display:grid;gap:6px}.pd select{width:100%;background:var(--spice-card,#242424);color:var(--pd-text);border:1px solid var(--spice-button-disabled,#666);border-radius:4px;padding:7px;font-size:12px}.pd-check{display:flex;align-items:center;gap:8px;margin:12px 0}.pd-check input{accent-color:var(--pd-accent)}.pd-profile{display:flex;gap:7px;flex-wrap:wrap}.pd-note{font-size:10px;margin:8px 0}\n.pd-compact{padding:16px}.pd-compact .pd-intro,.pd-compact .pd-sliders small{display:none}.pd-compact .pd-playing{margin-top:12px;margin-bottom:12px;padding:8px}.pd-compact .pd-cover{width:42px;height:42px}.pd-compact .pd-feedback{margin:12px 0;padding-bottom:12px}.pd-compact .pd-next{padding:5px 4px}\n.pd-mini{position:fixed;bottom:100px;right:24px;z-index:1000;display:flex;align-items:center;background:var(--spice-card,#202020);border:1px solid var(--spice-highlight,#444);border-radius:30px;box-shadow:0 4px 20px #0006;padding:5px}.pd-mini button{display:flex;gap:8px;align-items:center;background:none;border:0;color:var(--pd-text);padding:8px 10px;font:inherit;font-size:12px;cursor:pointer;border-radius:24px}.pd-mini button:hover{background:var(--spice-highlight,#333)}.pd-mini svg,.pd-mini small{color:var(--pd-accent)}.pd-mini small{font-size:11px}.pd-mini button:focus-visible{outline:2px solid var(--pd-accent)}\n@media(max-width:540px){.pd{padding:16px}.pd-modes{gap:4px}.pd-modes button{padding:7px 9px;font-size:11px}.pd-sliders{gap:16px}.pd-feedback{gap:7px}.pd-options{grid-template-columns:1fr}.pd-mini{right:12px;bottom:95px}.pd h1{font-size:20px}}\n.pd-sr{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden}.pd-bars{display:inline-flex;align-items:end;gap:2px;height:11px;margin-left:5px}.pd-bars i{display:block;background:var(--pd-accent);height:4px;width:2px}.pd[data-playing=true] .pd-bars i{animation:pd-pulse 1s ease-in-out infinite alternate}.pd[data-playing=true] .pd-bars i:nth-child(2){animation-delay:-.4s}.pd[data-playing=true] .pd-bars i:nth-child(3){animation-delay:-.7s}.pd .pd-next .pd-reason{color:var(--pd-accent);font-size:10px;margin-top:3px}.pd-next [data-pin][aria-pressed=true]{color:var(--pd-accent)}.pd-presets{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}.pd .pd-primary{font-weight:700}.pd button{transition:background-color .15s,color .15s,filter .15s}.pd-feedback{flex-wrap:wrap}.pd-details>label{display:grid;gap:6px;margin:12px 0}.pd-compact .pd-compact .pd-reason{display:none}\n@keyframes pd-pulse{to{height:11px}}@media(prefers-reduced-motion:reduce){.pd button{transition:none}.pd[data-playing=true] .pd-bars i{animation:none}}\n@media(max-width:420px){.pd-feedback button{padding:6px 9px}.pd-sliders{grid-template-columns:1fr}.pd-next{gap:7px}}\n.pd-reference{font-size:12px;margin:12px 0}.pd-reference small{color:var(--pd-sub)}.pd-reference p{margin:3px 0;overflow-wrap:anywhere}.pd-chips,.pd-examples,.pd-pickeractions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pd-chip{background:var(--spice-highlight,#282828);padding:4px 9px;border-radius:16px;font-size:11px}.pd-command label{display:block;font-weight:600;margin:12px 0 7px}.pd-command>div{display:flex;gap:8px}.pd input[type=text],.pd input:not([type]){min-width:0;width:100%;background:var(--spice-card,#242424);color:var(--pd-text);border:1px solid #666;border-radius:8px;padding:10px;font:inherit}.pd-command button,.pd-examples button,.pd-presets button,.pd-pickeractions button,.pd-narration button,.pd-secondary{border:1px solid var(--spice-button-disabled,#666);background:transparent;color:var(--pd-text);border-radius:20px;padding:7px 12px;font-size:12px}.pd-presets button.pd-selected{background:var(--pd-accent);border-color:var(--pd-accent);color:#000}.pd-examples button{font-size:10px;padding:4px 9px}.pd-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}.pd-choice{display:grid;gap:5px;min-width:0;text-align:left;border:0;border-radius:8px;padding:12px;background:var(--spice-card,#181818);animation:pd-enter .18s ease-out}.pd-choice:hover{background:var(--spice-highlight,#282828)}.pd-choice b,.pd-choice small{overflow-wrap:anywhere}.pd-choice b{font-size:13px}.pd-choice small{font-size:11px;color:var(--pd-sub)}.pd-choice .pd-evidence{color:var(--pd-accent);font-size:10px}.pd-choicecover{position:relative;display:grid;place-items:center;aspect-ratio:1;border-radius:5px;overflow:hidden;background:var(--spice-highlight,#282828);margin-bottom:4px}.pd-choicecover>img{width:100%;height:100%;object-fit:cover}.pd-choiceplay{position:absolute;bottom:8px;right:8px;border-radius:50%;background:var(--pd-accent);color:#000;padding:8px 12px;box-shadow:0 3px 12px #0007}.pd-picker{border:1px solid var(--spice-highlight,#333);padding:14px;border-radius:10px;margin:14px 0;animation:pd-enter .2s ease-out}.pd-picker>p{font-size:12px;color:var(--pd-sub)}.pd-narration{background:var(--spice-card,#181818);border-left:3px solid var(--pd-accent);padding:12px;border-radius:6px;margin:16px 0}.pd-narration p{font-size:13px;margin:0 0 10px}.pd-narration small{display:block;color:var(--pd-sub);font-size:10px;margin-top:8px}.pd .pd-other{width:auto;height:auto;font-size:11px;line-height:1.4;border:1px solid #666;border-radius:20px;padding:6px 10px}.pd-secondary{display:block;width:100%;margin:8px 0}.pd [data-tag]{display:grid;gap:8px;margin:12px 0}.pd button{transition:background-color .18s,color .18s,transform .18s,opacity .18s}.pd button:not(:disabled):active{transform:scale(.98)}\n@keyframes pd-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}\n@media(prefers-reduced-motion:reduce){.pd *{animation:none!important;transition:none!important}}@media(max-width:350px){.pd-cards{gap:7px}.pd-choice{padding:8px}.pd-command>div{flex-wrap:wrap}.pd-command button{width:100%}}\n.pd-artist-photo{border-radius:50%}.pd [data-matches]{padding:12px;border:1px solid var(--spice-highlight,#333);border-radius:8px}.pd .pd-next .pd-flow{font-size:10px;color:var(--pd-sub)}\n\n/* POOR DJ: a small music desk, with the daily controls always in reach. */\n.pd{max-width:640px;padding:22px;border-radius:12px}.pd-header{margin:0}.pd h1{letter-spacing:-1px;font-size:24px}.pd-byline{display:flex;justify-content:space-between;gap:12px;color:var(--pd-sub);font-size:11px;margin:5px 0 18px}.pd-header .pd-voice,.pd-follow{border:0;background:var(--spice-highlight,#252525);border-radius:22px;padding:7px 12px;font-size:11px}.pd-follow{margin:0 0 10px}.pd-reference{margin:10px 0;font-size:11px}.pd-reference p{margin:1px 0}.pd-playing{margin-bottom:10px}.pd-command label{font-size:14px}.pd-command button{white-space:nowrap;padding:8px 11px;font-size:11px}.pd-feedback{margin:12px 0;padding-bottom:12px;gap:8px}.pd-feedbackmore{margin-left:auto;position:relative;font-size:11px}.pd-feedbackmore summary{cursor:pointer;color:var(--pd-sub);padding:6px}.pd-feedbackmore[open]{width:100%;margin:0}.pd-feedbackmore button{margin:5px 4px 0 0}.pd-customize{margin-top:14px;border-top:1px solid var(--spice-highlight,#282828);padding-top:14px}.pd-customize>summary{font-size:12px;cursor:pointer;color:var(--pd-sub)}.pd-customize .pd-details{margin-top:10px}.pd-narration{padding:10px 12px;margin:12px 0}.pd-narration p{margin:0;font-size:12px}.pd .pd-note{font-size:11px;line-height:1.5}.pd-choicecover{max-height:118px;aspect-ratio:auto;height:118px}.pd-choiceplay{padding:6px 10px;font-size:12px}.pd-choice{padding:10px}.pd-picker{padding:12px;margin:12px 0}.pd-picker>p{font-size:11px;margin:6px 0}.pd-presets{margin:12px 0}.pd-presets button{font-size:11px;padding:6px 10px}.pd [data-matches]{max-height:320px;overflow-y:auto;overscroll-behavior:contain;padding:10px}.pd-results{display:grid;gap:5px;margin-top:8px}.pd-results .pd-choice{display:grid;grid-template-columns:42px minmax(0,1fr);column-gap:10px;row-gap:2px;padding:7px;align-items:center}.pd-results .pd-choicecover{grid-row:1/4;width:42px;height:42px;margin:0}.pd-results .pd-choice b,.pd-results .pd-choice small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}.pd-results .pd-choiceplay{display:none}.pd-artistmenu{padding:14px;background:var(--spice-card,#181818);border-radius:10px;animation:pd-enter .18s ease-out}.pd-artistmenu p{font-size:11px;color:var(--pd-sub);margin:8px 0}.pd-menuhead{display:flex;align-items:center;gap:10px}.pd-menuhead button{background:none;border:0;font-size:11px;color:var(--pd-sub)}.pd-mode{border:1px solid var(--spice-highlight,#333);padding:14px;align-content:start}.pd-mode:hover{border-color:var(--pd-accent)}.pd-mode b{color:var(--pd-accent)}.pd-primary{margin-top:12px}.pd-compact .pd-reference{font-size:10px}.pd-compact .pd-choicecover{height:90px}.pd-cover>svg{color:var(--pd-accent)}\n@media(max-width:540px){.pd{padding:16px}.pd-byline{font-size:10px}.pd h1{font-size:22px}.pd-header .pd-voice{padding:6px 9px;font-size:10px}.pd-command>div{gap:6px}.pd-command input{font-size:12px}.pd-cards{gap:8px}}\n@media(prefers-reduced-motion:reduce){.pd *{animation:none!important;transition:none!important}}\n";
-function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume}){
+// Letras sincronizadas: análisis, búsqueda de la línea activa y proveedor con caché.
+// Fuente principal: letras que el propio cliente de Spotify ya ofrece a la sesión.
+// LRCLIB solo se consulta si el usuario activa «Buscar letras fuera de Spotify».
+const INSTRUMENTAL=/^[\s♪♫•·.\-–—_]*$/;
+function parseLrc(text){
+  const lines=[];
+  for(const raw of String(text||'').split(/\r?\n/)){
+    const stamps=[...raw.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)];
+    if(!stamps.length)continue;
+    const words=raw.replace(/\[[^\]]*\]/g,'').trim();
+    for(const m of stamps)lines.push({t:(Number(m[1])*60+Number(m[2]))*1000+(m[3]?Math.round(Number('0.'+m[3])*1000):0),text:words});
+  }
+  return lines.sort((a,b)=>a.t-b.t);
+}
+function plainLines(text){return String(text||'').split(/\r?\n/).map(s=>s.trim()).filter((s,i,a)=>s || (a[i-1] && a[i+1])).map(text=>({t:null,text}));}
+function lyricsFromSpotify(json){
+  const l=json?.lyrics;if(!l || !Array.isArray(l.lines))return null;
+  const synced=String(l.syncType||'').toUpperCase()!=='UNSYNCED';
+  const lines=l.lines.map(x=>({t:synced?Number(x.startTimeMs):null,text:String(x.words??'').trim()})).filter(x=>!synced || Number.isFinite(x.t));
+  if(!lines.some(x=>x.text && !INSTRUMENTAL.test(x.text)))return null;
+  return {synced,lines:synced?lines.sort((a,b)=>a.t-b.t):lines,source:'Spotify',language:l.language||'',provider:l.providerDisplayName||l.provider||''};
+}
+function lyricsFromLrclib(json){
+  if(!json || json.instrumental)return null;
+  const synced=parseLrc(json.syncedLyrics);
+  if(synced.some(x=>x.text))return {synced:true,lines:synced,source:'LRCLIB',language:'',provider:'LRCLIB'};
+  const plain=plainLines(json.plainLyrics);
+  return plain.some(x=>x.text)?{synced:false,lines:plain,source:'LRCLIB',language:'',provider:'LRCLIB'}:null;
+}
+// Última línea cuyo inicio ya pasó; -1 antes de la primera.
+function activeLine(lines,ms){
+  let lo=0,hi=lines.length-1,found=-1;
+  while(lo<=hi){const mid=(lo+hi)>>1;if(lines[mid].t<=ms){found=mid;lo=mid+1;}else hi=mid-1;}
+  return found;
+}
+const withTimeout=(promise,ms)=>new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('Tiempo de espera agotado')),ms);Promise.resolve(promise).then(v=>{clearTimeout(t);resolve(v);},e=>{clearTimeout(t);reject(e);});});
+const isGap=line=>!line?.text || INSTRUMENTAL.test(line.text);
+class LyricsProvider{
+  constructor({spotify,external,saved={},persist=()=>{},timeout=7000}={}){
+    this.timeout=timeout;this.spotify=spotify;this.external=external;this.persist=persist;this.pending=new Map();this.memory=new Map();
+    // Solo se guardan resultados negativos para no repetir consultas; el texto no se persiste.
+    this.misses=new Map(Object.entries(saved).filter(([,at])=>Date.now()-at<86400000));
+  }
+  async get(track,{fallback=false}={}){
+    if(!track?.uri)return {state:'none'};
+    const id=track.uri.split(':').pop(),key=id+(fallback?'+x':'');
+    if(this.memory.has(key))return this.memory.get(key);
+    if(this.misses.has(key))return {state:'none'};
+    if(!this.pending.has(key)){
+      const job=this.#load(track,id,fallback).then(result=>{
+        this.pending.delete(key);
+        if(result.state==='ready'){this.memory.set(key,result);if(this.memory.size>30)this.memory.delete(this.memory.keys().next().value);}
+        else if(result.state==='none'){this.misses.set(key,Date.now());this.persist(Object.fromEntries([...this.misses].slice(-200)));}
+        return result;
+      },error=>{this.pending.delete(key);throw error;});
+      this.pending.set(key,job);
+    }
+    return this.pending.get(key);
+  }
+  async #load(track,id,fallback){
+    let failure;
+    if(this.spotify){try{const data=lyricsFromSpotify(await withTimeout(this.spotify(id,track),this.timeout));if(data)return {state:'ready',...data};}catch(e){failure=e;}}
+    if(fallback && this.external){try{const data=lyricsFromLrclib(await withTimeout(this.external(track),this.timeout));if(data)return {state:'ready',...data};}catch(e){failure=failure||e;}}
+    // 404 de Spotify = no hay letra; cualquier otro fallo se reintenta la próxima vez.
+    const status=failure?.status??failure?.code;
+    return failure && ![404,'404'].includes(status) && !/404|not found/i.test(failure.message||'')?{state:'error',message:failure.message||'Error'}:{state:'none'};
+  }
+  clear(){this.memory.clear();this.misses.clear();this.persist({});}
+}
+
+// Informe de compatibilidad: qué partes del cliente responden. Puro: recibe resultados ya medidos.
+function compatReport({api={},probes={}}){
+  const row=(name,ok,detail)=>({name,ok:ok===null?null:!!ok,detail});
+  const probe=(key,label)=>probes[key]===undefined?row(label,null,'Sin comprobar'):row(label,probes[key]===true,probes[key]===true?'Responde':'No responde: Spotify pudo cambiar esta consulta');
+  const rows=[
+    row('Cola de reproducción',api.queue,api.queue?'Disponible':'No disponible: el DJ no puede gestionar la cola'),
+    row('Reproducción directa',api.play,api.play?'Disponible':'No disponible'),
+    probe('search','Búsqueda de canciones'),probe('artists','Búsqueda de artistas'),
+    row('Datos acústicos',api.audio,api.audio?'Disponible':'No disponibles: se mezcla sin tempo ni tono'),
+    row('Playlists privadas',api.playlists,api.playlists?'Disponible':'No disponible: no se podrán guardar mezclas'),
+    row('Voz en español',api.voice,api.voice?'Disponible':'No disponible: solo subtítulos'),
+    row('Letras de Spotify',api.lyrics,api.spicy?'Spicy Lyrics se encarga de las letras':api.lyrics?'Disponible':'No disponible'),
+  ];
+  return {rows,problems:rows.filter(r=>r.ok===false).length};
+}
+
+if(typeof module!=='undefined' && module.exports){module.exports={Engine,normalize,compatibility,settingsOf,AudioLibrary,RequestCache,sameEntry,affinityPool,guardPlay,parseCommand,intentOf,intentLabels,knownEvidence,migrateProfile,ChoiceDeck,Narrator,VoiceGate,MusicLibrary,isKnown,collectArtists,hasArtist,mixUris,artistChoice,transitionFit,transitionLabel,NativeTransitions,commentary,contextKey,words,songKey,queryDefinition,parseLrc,lyricsFromSpotify,lyricsFromLrclib,activeLine,LyricsProvider,isGap,compatReport,moodOf,fadePlan};return;}
+const CSS=".pd,.pd-mini{--pd-accent:#1ed760;--pd-ink:#000;--pd-bg:var(--spice-main,#121212);--pd-text:var(--spice-text,#fff);--pd-sub:var(--spice-subtext,#b3b3b3);color:var(--pd-text);font-family:inherit;box-sizing:border-box}\n.pd[data-accent=theme],.pd-mini[data-accent=theme]{--pd-accent:var(--spice-button,#1ed760)}\n.pd[data-accent=blue],.pd-mini[data-accent=blue]{--pd-accent:#74b9ff}.pd[data-accent=violet],.pd-mini[data-accent=violet]{--pd-accent:#c4a3ff}.pd[data-accent=rose],.pd-mini[data-accent=rose]{--pd-accent:#ff9cbd}\n.pd{background:var(--pd-bg);padding:24px;width:100%;max-width:700px;border-radius:8px;font-size:14px;line-height:1.5}.pd *{box-sizing:border-box}.pd button,.pd input,.pd select{font:inherit}.pd button{cursor:pointer;color:inherit}.pd button:disabled{opacity:.5;cursor:wait}.pd button:focus-visible,.pd input:focus-visible,.pd select:focus-visible,.pd summary:focus-visible{outline:2px solid var(--pd-accent);outline-offset:3px}.pd [hidden],.pd-mini[hidden]{display:none!important}\n.pd-header,.pd-brand,.pd-queuehead,.pd-feedback{display:flex;align-items:center;gap:12px}.pd-header{justify-content:space-between}.pd-brand>svg{color:var(--pd-accent);width:24px;height:24px}.pd h1{font-size:22px;letter-spacing:-.5px;font-weight:750;margin:0}.pd h1 small{font-size:11px;color:var(--pd-sub);font-weight:400;margin-left:5px}.pd-live{font-size:12px;color:var(--pd-sub)}.pd-live.pd-active{color:var(--pd-accent)}.pd-live.pd-active:before{content:'●';padding-right:6px}.pd-intro,.pd-explanation,.pd-note{color:var(--pd-sub);font-size:12px;margin:8px 0 18px}\n.pd-playing{display:flex;align-items:center;gap:12px;padding:12px;background:var(--spice-card,#181818);border-radius:6px;margin-bottom:18px}.pd-cover{height:56px;width:56px;position:relative;display:grid;place-items:center;background:var(--spice-highlight,#282828);border-radius:4px;flex-shrink:0;overflow:hidden}.pd-cover img{position:absolute;width:100%;height:100%;object-fit:cover}.pd-playing>div:last-child{min-width:0}.pd-playing small{font-size:11px;color:var(--pd-sub)}.pd h2{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:1px 0;font-weight:650}.pd-playing p{font-size:12px;color:var(--pd-sub);margin:0}\n.pd-feedback{margin:18px 0;padding-bottom:18px;border-bottom:1px solid var(--spice-highlight,#282828)}.pd-feedback>span{margin-right:auto;color:var(--pd-sub);font-size:12px}.pd-feedback button,.pd-profile button,.pd-details button{background:none;border:1px solid var(--spice-button-disabled,#666);border-radius:20px;font-size:11px;font-weight:600;padding:6px 12px}.pd-feedback button:hover,.pd-profile button:hover,.pd-details button:hover{border-color:var(--pd-text)}\n.pd-queuehead{margin-bottom:7px}.pd h3{font-size:14px;margin:0;flex:1}.pd-queuehead small{font-size:11px;color:var(--pd-sub)}.pd-queuehead button,.pd-next>button{background:none;border:0;font-size:22px;color:var(--pd-sub);border-radius:50%;width:30px;height:30px;line-height:1}.pd-queuehead button:hover,.pd-next>button:hover{color:var(--pd-text);background:var(--spice-highlight,#282828)}.pd-next{display:flex;align-items:center;gap:12px;padding:9px 4px;border-radius:4px}.pd-next:hover{background:var(--spice-highlight,#242424)}.pd-index{color:var(--pd-sub);font-size:12px;width:12px;text-align:right}.pd-next>div{flex:1;min-width:0}.pd-next b{display:block;font-size:12px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.pd-next small{display:block;font-size:11px;color:var(--pd-sub);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.pd-empty{font-size:12px;color:var(--pd-sub);padding:12px 0;margin:0 0 12px}\n.pd-primary{display:block;width:100%;background:var(--pd-accent);color:var(--pd-ink)!important;border:0;border-radius:24px;padding:11px;margin-top:16px;font-size:14px;font-weight:700}.pd-primary:hover{filter:brightness(1.06)}.pd-status{font-size:11px;color:var(--pd-sub);margin:10px 0;line-height:1.5}.pd-error{color:#ffa59c}.pd-link{border:0;background:none;text-decoration:underline;color:var(--pd-sub);font-size:12px}.pd-details{border-top:1px solid var(--spice-highlight,#282828);padding:11px 0;font-size:12px;color:var(--pd-sub)}.pd-details summary{cursor:pointer;color:var(--pd-text);font-size:12px;font-weight:600}.pd-details p{margin:10px 0;line-height:1.6}.pd-details a{display:inline-block;color:var(--pd-text);margin:10px 0 0 10px;font-size:11px}.pd-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:13px 0}.pd-options label{display:grid;gap:6px}.pd select{width:100%;background:var(--spice-card,#242424);color:var(--pd-text);border:1px solid var(--spice-button-disabled,#666);border-radius:4px;padding:7px;font-size:12px}.pd-check{display:flex;align-items:center;gap:8px;margin:12px 0}.pd-check input{accent-color:var(--pd-accent)}.pd-profile{display:flex;gap:7px;flex-wrap:wrap}.pd-note{font-size:10px;margin:8px 0}\n.pd-compact{padding:16px}.pd-compact .pd-intro,.pd-compact .pd-sliders small{display:none}.pd-compact .pd-playing{margin-top:12px;margin-bottom:12px;padding:8px}.pd-compact .pd-cover{width:42px;height:42px}.pd-compact .pd-feedback{margin:12px 0;padding-bottom:12px}.pd-compact .pd-next{padding:5px 4px}\n.pd-mini{position:fixed;bottom:100px;right:24px;z-index:1000;display:flex;align-items:center;background:var(--spice-card,#202020);border:1px solid var(--spice-highlight,#444);border-radius:30px;box-shadow:0 4px 20px #0006;padding:5px}.pd-mini button{display:flex;gap:8px;align-items:center;background:none;border:0;color:var(--pd-text);padding:8px 10px;font:inherit;font-size:12px;cursor:pointer;border-radius:24px}.pd-mini button:hover{background:var(--spice-highlight,#333)}.pd-mini svg,.pd-mini small{color:var(--pd-accent)}.pd-mini small{font-size:11px}.pd-mini button:focus-visible{outline:2px solid var(--pd-accent)}\n@media(max-width:540px){.pd{padding:16px}.pd-modes{gap:4px}.pd-modes button{padding:7px 9px;font-size:11px}.pd-sliders{gap:16px}.pd-feedback{gap:7px}.pd-options{grid-template-columns:1fr}.pd-mini{right:12px;bottom:95px}.pd h1{font-size:20px}}\n.pd-sr{position:absolute;clip:rect(0,0,0,0);width:1px;height:1px;overflow:hidden}.pd-bars{display:inline-flex;align-items:end;gap:2px;height:11px;margin-left:5px}.pd-bars i{display:block;background:var(--pd-accent);height:4px;width:2px}.pd[data-playing=true] .pd-bars i{animation:pd-pulse 1s ease-in-out infinite alternate}.pd[data-playing=true] .pd-bars i:nth-child(2){animation-delay:-.4s}.pd[data-playing=true] .pd-bars i:nth-child(3){animation-delay:-.7s}.pd .pd-next .pd-reason{color:var(--pd-accent);font-size:10px;margin-top:3px}.pd-next [data-pin][aria-pressed=true]{color:var(--pd-accent)}.pd-presets{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0}.pd .pd-primary{font-weight:700}.pd button{transition:background-color .15s,color .15s,filter .15s}.pd-feedback{flex-wrap:wrap}.pd-details>label{display:grid;gap:6px;margin:12px 0}.pd-compact .pd-compact .pd-reason{display:none}\n@keyframes pd-pulse{to{height:11px}}@media(prefers-reduced-motion:reduce){.pd button{transition:none}.pd[data-playing=true] .pd-bars i{animation:none}}\n@media(max-width:420px){.pd-feedback button{padding:6px 9px}.pd-sliders{grid-template-columns:1fr}.pd-next{gap:7px}}\n.pd-reference{font-size:12px;margin:12px 0}.pd-reference small{color:var(--pd-sub)}.pd-reference p{margin:3px 0;overflow-wrap:anywhere}.pd-chips,.pd-examples,.pd-pickeractions{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.pd-chip{background:var(--spice-highlight,#282828);padding:4px 9px;border-radius:16px;font-size:11px}.pd-command label{display:block;font-weight:600;margin:12px 0 7px}.pd-command>div{display:flex;gap:8px}.pd input[type=text],.pd input:not([type]){min-width:0;width:100%;background:var(--spice-card,#242424);color:var(--pd-text);border:1px solid #666;border-radius:8px;padding:10px;font:inherit}.pd-command button,.pd-examples button,.pd-presets button,.pd-pickeractions button,.pd-narration button,.pd-secondary{border:1px solid var(--spice-button-disabled,#666);background:transparent;color:var(--pd-text);border-radius:20px;padding:7px 12px;font-size:12px}.pd-presets button.pd-selected{background:var(--pd-accent);border-color:var(--pd-accent);color:#000}.pd-examples button{font-size:10px;padding:4px 9px}.pd-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}.pd-choice{display:grid;gap:5px;min-width:0;text-align:left;border:0;border-radius:8px;padding:12px;background:var(--spice-card,#181818);animation:pd-enter .18s ease-out}.pd-choice:hover{background:var(--spice-highlight,#282828)}.pd-choice b,.pd-choice small{overflow-wrap:anywhere}.pd-choice b{font-size:13px}.pd-choice small{font-size:11px;color:var(--pd-sub)}.pd-choice .pd-evidence{color:var(--pd-accent);font-size:10px}.pd-choicecover{position:relative;display:grid;place-items:center;aspect-ratio:1;border-radius:5px;overflow:hidden;background:var(--spice-highlight,#282828);margin-bottom:4px}.pd-choicecover>img{width:100%;height:100%;object-fit:cover}.pd-choiceplay{position:absolute;bottom:8px;right:8px;border-radius:50%;background:var(--pd-accent);color:#000;padding:8px 12px;box-shadow:0 3px 12px #0007}.pd-picker{border:1px solid var(--spice-highlight,#333);padding:14px;border-radius:10px;margin:14px 0;animation:pd-enter .2s ease-out}.pd-picker>p{font-size:12px;color:var(--pd-sub)}.pd-narration{background:var(--spice-card,#181818);border-left:3px solid var(--pd-accent);padding:12px;border-radius:6px;margin:16px 0}.pd-narration p{font-size:13px;margin:0 0 10px}.pd-narration small{display:block;color:var(--pd-sub);font-size:10px;margin-top:8px}.pd .pd-other{width:auto;height:auto;font-size:11px;line-height:1.4;border:1px solid #666;border-radius:20px;padding:6px 10px}.pd-secondary{display:block;width:100%;margin:8px 0}.pd [data-tag]{display:grid;gap:8px;margin:12px 0}.pd button{transition:background-color .18s,color .18s,transform .18s,opacity .18s}.pd button:not(:disabled):active{transform:scale(.98)}\n@keyframes pd-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}\n@media(prefers-reduced-motion:reduce){.pd *{animation:none!important;transition:none!important}}@media(max-width:350px){.pd-cards{gap:7px}.pd-choice{padding:8px}.pd-command>div{flex-wrap:wrap}.pd-command button{width:100%}}\n.pd-artist-photo{border-radius:50%}.pd [data-matches]{padding:12px;border:1px solid var(--spice-highlight,#333);border-radius:8px}.pd .pd-next .pd-flow{font-size:10px;color:var(--pd-sub)}\n\n/* POOR DJ: a small music desk, with the daily controls always in reach. */\n.pd{max-width:640px;padding:22px;border-radius:12px}.pd-header{margin:0}.pd h1{letter-spacing:-1px;font-size:24px}.pd-byline{display:flex;justify-content:space-between;gap:12px;color:var(--pd-sub);font-size:11px;margin:5px 0 18px}.pd-header .pd-voice,.pd-follow{border:0;background:var(--spice-highlight,#252525);border-radius:22px;padding:7px 12px;font-size:11px}.pd-follow{margin:0 0 10px}.pd-reference{margin:10px 0;font-size:11px}.pd-reference p{margin:1px 0}.pd-playing{margin-bottom:10px}.pd-command label{font-size:14px}.pd-command button{white-space:nowrap;padding:8px 11px;font-size:11px}.pd-feedback{margin:12px 0;padding-bottom:12px;gap:8px}.pd-feedbackmore{margin-left:auto;position:relative;font-size:11px}.pd-feedbackmore summary{cursor:pointer;color:var(--pd-sub);padding:6px}.pd-feedbackmore[open]{width:100%;margin:0}.pd-feedbackmore button{margin:5px 4px 0 0}.pd-customize{margin-top:14px;border-top:1px solid var(--spice-highlight,#282828);padding-top:14px}.pd-customize>summary{font-size:12px;cursor:pointer;color:var(--pd-sub)}.pd-customize .pd-details{margin-top:10px}.pd-narration{padding:10px 12px;margin:12px 0}.pd-narration p{margin:0;font-size:12px}.pd .pd-note{font-size:11px;line-height:1.5}.pd-choicecover{max-height:118px;aspect-ratio:auto;height:118px}.pd-choiceplay{padding:6px 10px;font-size:12px}.pd-choice{padding:10px}.pd-picker{padding:12px;margin:12px 0}.pd-picker>p{font-size:11px;margin:6px 0}.pd-presets{margin:12px 0}.pd-presets button{font-size:11px;padding:6px 10px}.pd [data-matches]{max-height:320px;overflow-y:auto;overscroll-behavior:contain;padding:10px}.pd-results{display:grid;gap:5px;margin-top:8px}.pd-results .pd-choice{display:grid;grid-template-columns:42px minmax(0,1fr);column-gap:10px;row-gap:2px;padding:7px;align-items:center}.pd-results .pd-choicecover{grid-row:1/4;width:42px;height:42px;margin:0}.pd-results .pd-choice b,.pd-results .pd-choice small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}.pd-results .pd-choiceplay{display:none}.pd-artistmenu{padding:14px;background:var(--spice-card,#181818);border-radius:10px;animation:pd-enter .18s ease-out}.pd-artistmenu p{font-size:11px;color:var(--pd-sub);margin:8px 0}.pd-menuhead{display:flex;align-items:center;gap:10px}.pd-menuhead button{background:none;border:0;font-size:11px;color:var(--pd-sub)}.pd-mode{border:1px solid var(--spice-highlight,#333);padding:14px;align-content:start}.pd-mode:hover{border-color:var(--pd-accent)}.pd-mode b{color:var(--pd-accent)}.pd-primary{margin-top:12px}.pd-compact .pd-reference{font-size:10px}.pd-compact .pd-choicecover{height:90px}.pd-cover>svg{color:var(--pd-accent)}\n@media(max-width:540px){.pd{padding:16px}.pd-byline{font-size:10px}.pd h1{font-size:22px}.pd-header .pd-voice{padding:6px 9px;font-size:10px}.pd-command>div{gap:6px}.pd-command input{font-size:12px}.pd-cards{gap:8px}}\n@media(prefers-reduced-motion:reduce){.pd *{animation:none!important;transition:none!important}}\n\n/* POOR DJ 3.4: tinte de portada, pestañas, transporte y letras. */\n.pd{--pd-tint:transparent;position:relative;background:linear-gradient(180deg,color-mix(in srgb,var(--pd-tint) 38%,var(--pd-bg)) 0,var(--pd-bg) 340px) var(--pd-bg);transition:background .6s}\n.pd-tabs{display:flex;gap:4px;padding:4px;background:var(--spice-card,#1c1c1c);border-radius:24px;margin:0 0 14px}.pd-tabs button{flex:1;border:0;background:none;border-radius:20px;padding:7px;font-size:12px;font-weight:650;color:var(--pd-sub)}.pd .pd-tabs button.pd-selected{background:var(--pd-accent);color:var(--pd-ink)}\n.pd-playing{background:color-mix(in srgb,var(--pd-tint) 18%,var(--spice-card,#181818));box-shadow:0 8px 24px #0004}.pd-cover{width:68px;height:68px;border-radius:8px;box-shadow:0 6px 18px #0006}.pd-compact .pd-cover{width:48px;height:48px}\n.pd-transport{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:11px;color:var(--pd-sub)}.pd-transport button{border:0;background:none;font-size:14px;width:32px;height:32px;border-radius:50%;padding:0}.pd-transport button:hover{background:var(--spice-highlight,#282828)}.pd .pd-transport .pd-playbtn{background:var(--pd-text);color:var(--pd-bg);font-size:12px}.pd-progress{flex:1;height:14px;display:flex;align-items:center;cursor:pointer}.pd-progress:before{content:'';display:block;height:4px;width:100%;border-radius:2px;background:linear-gradient(90deg,var(--pd-accent) calc(var(--p,0)*100%),var(--spice-highlight,#3a3a3a) 0)}.pd-progress:hover:before{height:6px}.pd-progress i{display:none}\n.pd-lyricspane{display:flex;flex-direction:column;gap:10px}.pd-lyricshead{display:flex;justify-content:space-between;gap:10px;color:var(--pd-sub);overflow:hidden}.pd-lyricshead small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n.pd-lyricsscroll{height:min(52vh,430px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding:34% 4px;mask-image:linear-gradient(transparent,#000 14%,#000 82%,transparent);-webkit-mask-image:linear-gradient(transparent,#000 14%,#000 82%,transparent);border-radius:10px}.pd-lyricsscroll::-webkit-scrollbar{display:none}\n.pd-lines{display:grid;gap:.55em}.pd-line{margin:0;font-size:22px;line-height:1.25;font-weight:750;letter-spacing:-.4px;color:var(--pd-text);opacity:.36;filter:blur(.6px);transform-origin:left center;transition:opacity .35s,transform .35s,filter .35s;cursor:pointer}.pd-line:hover{opacity:.7}.pd-line[data-d=\"1\"]{opacity:.5}.pd-line[data-d=\"2\"]{opacity:.38}.pd-line[data-d=\"3\"]{opacity:.28;filter:blur(1.2px)}.pd .pd-line.pd-now{opacity:1;filter:none;transform:scale(1.03);text-shadow:0 0 22px color-mix(in srgb,var(--pd-accent) 45%,transparent)}.pd-line.pd-gap{font-size:14px;letter-spacing:4px}\n.pd[data-lsize=s] .pd-line{font-size:17px}.pd[data-lsize=l] .pd-line{font-size:28px}\n.pd-lyricstools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.pd-lyricstools>span{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--pd-sub);font-size:11px}.pd-lyricstools button{border:1px solid var(--spice-button-disabled,#666);background:none;border-radius:20px;padding:5px 11px;font-size:12px}.pd-lyricstools button:hover{border-color:var(--pd-text)}\n.pd:fullscreen{max-width:none;width:100vw;height:100vh;border-radius:0;padding:5vh 6vw;overflow:auto}.pd:fullscreen .pd-lyricsscroll{height:62vh}.pd:fullscreen .pd-line{font-size:clamp(26px,4vw,52px)}\n.pd[data-lyrics=false] .pd-tabs{display:none}.pd-lyricsscroll:focus-visible{outline:2px solid var(--pd-accent)}\n.pd-choice,.pd-next,.pd-details{border-radius:10px}.pd-primary{box-shadow:0 6px 18px color-mix(in srgb,var(--pd-accent) 28%,transparent)}\n@media(prefers-reduced-motion:reduce){.pd-line,.pd{transition:none!important}}\n@media(max-width:540px){.pd-line{font-size:19px}.pd-lyricsscroll{height:46vh}}\n\n/* Página de letras de escritorio (/PoorDJ). */\n.pd-page{position:absolute;inset:0;z-index:5;max-width:none;width:auto;border-radius:inherit;display:grid;grid-template-columns:minmax(220px,32%) 1fr;gap:4vw;padding:4vh 4vw;overflow:hidden;background:linear-gradient(135deg,color-mix(in srgb,var(--pd-tint) 55%,#000),var(--pd-bg) 70%) var(--pd-bg)}\n.pd-pagecover{display:flex;flex-direction:column;justify-content:center;gap:10px;min-width:0}.pd-bigcover{width:100%;height:auto;aspect-ratio:1;max-width:340px;border-radius:12px;box-shadow:0 18px 48px #0008}.pd-page h2{font-size:22px;white-space:normal}.pd-page .pd-pagecover p{margin:0;color:var(--pd-sub)}\n.pd-pagelyrics{display:flex;flex-direction:column;gap:10px;min-height:0;min-width:0}.pd-pagelyrics .pd-lyricsscroll{flex:1;height:auto;padding:30vh 4px}.pd-page .pd-line{font-size:clamp(24px,3vw,44px)}.pd-page[data-lsize=s] .pd-line{font-size:clamp(18px,2.2vw,32px)}.pd-page[data-lsize=l] .pd-line{font-size:clamp(30px,4vw,58px)}\n.pd-page .pd-secondary{width:auto;align-self:flex-start;margin:2px 0}.pd-page:fullscreen{position:fixed}\n@media(max-width:760px){.pd-page{grid-template-columns:1fr}.pd-pagecover{display:none}}\n\n/* El DJ como pista: tarjeta con identidad propia mientras habla. */\n.pd[data-dj=true] .pd-playing{background:linear-gradient(120deg,color-mix(in srgb,var(--pd-accent) 28%,var(--spice-card,#181818)),var(--spice-card,#181818));border:1px solid color-mix(in srgb,var(--pd-accent) 50%,transparent)}\n.pd[data-dj=true] .pd-cover{background:var(--pd-accent);color:var(--pd-ink)}.pd[data-dj=true] .pd-cover>svg{color:var(--pd-ink);transform:scale(1.4)}.pd[data-dj=true] .pd-playing p{white-space:normal;color:var(--pd-text)}\n.pd-options{grid-template-columns:repeat(2,minmax(0,1fr))}.pd-customize>.pd-check{margin:8px 0}\n\n.pd-toastdj{position:fixed;left:50%;bottom:110px;transform:translateX(-50%);max-width:min(560px,90vw);z-index:100000;background:var(--spice-card,#181818);color:var(--spice-text,#fff);border:1px solid #1ed760;border-radius:14px;padding:10px 16px;font-size:14px;box-shadow:0 8px 28px #000a;animation:pd-enter .2s ease-out}.pd-toastdj[hidden]{display:none}.pd-toastdj b{color:#1ed760;margin-right:6px}\n.pd-transport [data-openspicy]{width:auto;border-radius:16px;padding:0 10px;font-size:11px;border:1px solid var(--spice-button-disabled,#666)}\n\n.pd-diag{list-style:none;padding:0;margin:8px 0;font-size:12px;display:grid;gap:4px}.pd-diag:empty{display:none}\n\n/* 3.4 simplificada: una tarjeta de inicio, después lo demás. */\n.pd-start{display:grid;gap:10px;padding:14px;margin:0 0 14px;background:var(--spice-card,#181818);border-radius:14px}\n.pd-start .pd-presets{display:flex;gap:4px;padding:4px;margin:0;background:var(--spice-main,#121212);border-radius:24px}.pd-start .pd-presets button{flex:1;border:0;border-radius:20px;padding:8px 6px;font-size:12px;font-weight:650;color:var(--pd-sub)}.pd .pd-start .pd-presets button.pd-selected{background:var(--pd-text);color:var(--pd-bg)}\n.pd-start .pd-primary{margin:0;padding:13px;font-size:15px}.pd .pd-primary.pd-stop{background:transparent;color:var(--pd-text)!important;border:1px solid var(--spice-button-disabled,#666);box-shadow:none}\n.pd-start .pd-follow{margin:0;background:none;color:var(--pd-sub);text-decoration:underline;justify-self:center;font-size:12px;padding:2px}.pd-start .pd-status{margin:0;text-align:center}.pd-start .pd-secondary{margin:0}\n.pd-command{margin:16px 0 0}.pd-command label{font-size:13px;color:var(--pd-sub);font-weight:600}\n.pd-queuehead{margin-top:14px}\n.pd-credit{margin:18px 0 0;padding-top:12px;border-top:1px solid var(--spice-highlight,#282828);text-align:center;font-size:11px;color:var(--pd-sub)}.pd-credit b{color:var(--pd-text);letter-spacing:.8px}\n\n/* Robustez y pulido de 3.4. */\n.pd-lyricspane:fullscreen,.pd-page:fullscreen{background:var(--pd-bg,#121212);color:var(--pd-text,#fff);padding:5vh 6vw;display:flex;flex-direction:column}.pd-lyricspane:fullscreen .pd-lyricsscroll{flex:1;height:auto}.pd-lyricspane:fullscreen .pd-line{font-size:clamp(26px,4vw,52px)}\n.pd button:focus-visible,.pd-tabs button:focus-visible{outline:2px solid var(--pd-accent);outline-offset:2px}\n.pd-narration{font-style:italic}.pd-narration p{line-height:1.45}\n.pd-live{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;background:var(--spice-card,#1c1c1c)}.pd-live.pd-active{background:color-mix(in srgb,var(--pd-accent) 18%,var(--spice-card,#1c1c1c))}\n.pd-next{transition:background-color .15s}.pd-chip{border:1px solid var(--spice-highlight,#333);background:transparent}\n.pd-toastdj{pointer-events:none}\n";
+function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume,lyrics,diagnose}){
   const style=document.createElement('style');style.id='poor-dj-style';style.textContent=CSS;document.head.append(style);
   let panel;const mini=document.createElement('aside');mini.className='pd-mini';mini.hidden=true;mini.setAttribute('aria-label','Sesión POOR DJ');
   mini.innerHTML=`<button data-open>${ICON}<span>POOR DJ</span></button><button data-stop aria-label="Terminar DJ">■</button>`;document.body.append(mini);
@@ -864,26 +1025,143 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
   const theme=node=>{node.dataset.accent=engine.settings.accent;node.classList.toggle('pd-compact',engine.settings.compact);};
   const text=(key,value)=>{const n=panel?.querySelector(`[data-${key}]`);if(n && n.textContent!==String(value))n.textContent=value;};
   const download=(data,name)=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+  const L={uri:'',data:null,state:'idle',idx:-2,follow:true,pause:0,raf:0,tab:'dj',tint:new Map(),tintUri:'',sleep:0,sleepAt:0,job:0};
+  const fmt=ms=>{const s=Math.max(0,Math.floor(ms/1000));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');};
+  const clock=()=>S.Player.getProgress()+(engine.settings.lyricsOffset||0);
+  const seek=ms=>{try{if(typeof S.Player.seek==='function')S.Player.seek(ms);else (S.Platform.PlayerAPI?.seekTo||S.Platform.PlayerAPI?.seek)?.call(S.Platform.PlayerAPI,ms);}catch(_){}};
+  let panelView;
+  const views=[];
+  const addView=(root,active)=>{const v={root,active,idx:-2,rendered:'',follow:true,pause:0};views.push(v);return v;};
+  const liveViews=()=>{for(let i=views.length-1;i>=0;i--)if(!views[i].root.isConnected)views.splice(i,1);return views;};
+  const resetViews=()=>liveViews().forEach(v=>{v.idx=-2;v.follow=true;v.pause=0;});
+  function loadLyrics(){
+    const track=engine.current;if(!ownLyrics() || !track?.uri || !liveViews().some(v=>v.active())){return;}
+    if(L.uri===track.uri && L.state!=='error')return;
+    L.uri=track.uri;L.state='loading';L.data=null;views.forEach(v=>{v.rendered='';v.idx=-2;});const job=++L.job;paintLyrics();
+    lyrics.get(track,{fallback:engine.settings.lyricsExternal}).then(r=>{if(job!==L.job)return;L.state=r.state;L.data=r.state==='ready'?r:null;L.message=r.message;views.forEach(v=>v.rendered='');paintLyrics();}).catch(e=>{if(job!==L.job)return;L.state='error';L.message=e.message;views.forEach(v=>v.rendered='');paintLyrics();});
+  }
+  function paintLyrics(){
+    const info={idle:'Reproduce una canción para ver su letra.',loading:'Buscando la letra…',none:engine.settings.lyricsExternal?'No encontré letra para esta canción.':'Spotify no tiene letra para esta canción. Puedes activar la búsqueda externa en Ajustes.',error:'No pude cargar la letra. Se reintentará con la siguiente canción.'};
+    const d=L.data;
+    for(const v of liveViews()){
+      const box=v.root.querySelector('[data-lines]'),msg=v.root.querySelector('[data-lyricsmsg]');if(!box)continue;
+      msg.hidden=!!d;msg.textContent=d?'':info[L.state]||'';
+      const key=d?L.uri+d.source:'';if(v.rendered===key)continue;v.rendered=key;
+      box.innerHTML=d?d.lines.map((l,i)=>`<p class="pd-line${isGap(l)?' pd-gap':''}" ${l.t!=null?`data-seek="${l.t}"`:''} data-i="${i}">${isGap(l)?'<span aria-hidden="true">● ● ●</span>':esc(l.text)}</p>`).join(''):'';
+      v.root.querySelector('[data-lyricssource]').textContent=d?`${d.synced?'Sincronizada':'Sin sincronizar'} · ${d.provider||d.source}`:'';
+      box.parentNode.scrollTop=0;v.idx=-2;
+    }
+  }
+  function tickLyrics(){
+    if(!L.data?.synced)return;
+    for(const v of liveViews()){
+      if(!v.active())continue;const box=v.root.querySelector('[data-lines]');if(!box)continue;
+      const i=activeLine(L.data.lines,clock()+250);if(i===v.idx)continue;
+      const nodes=box.children;if(v.idx>=0 && nodes[v.idx])nodes[v.idx].classList.remove('pd-now');
+      v.idx=i;if(i<0)continue;
+      for(let n=Math.max(0,i-8);n<Math.min(nodes.length,i+9);n++)nodes[n].dataset.d=Math.min(3,Math.abs(n-i));
+      const node=nodes[i];node.classList.add('pd-now');
+      if(v.follow && Date.now()>v.pause){const sc=box.parentNode;sc.scrollTo({top:Math.max(0,node.offsetTop-sc.clientHeight*.38+node.offsetHeight/2),behavior:matchMedia('(prefers-reduced-motion:reduce)').matches?'auto':'smooth'});}
+    }
+  }
+  function wireLyrics(v){
+    const root=v.root,sc=root.querySelector('.pd-lyricsscroll'),back=root.querySelector('[data-follow-lyrics]');
+    const pause=()=>{v.pause=Date.now()+3500;back.hidden=false;};
+    sc.addEventListener('wheel',pause,{passive:true});sc.addEventListener('touchmove',pause,{passive:true});sc.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','PageUp','PageDown'].includes(e.key))pause();});
+    root.addEventListener('click',e=>{
+      const line=e.target.closest('[data-seek]');
+      if(line){e.stopPropagation();seek(Math.max(0,Number(line.dataset.seek)-(engine.settings.lyricsOffset||0)));v.follow=true;v.pause=0;return;}
+      const b=e.target.closest('button');if(!b || !root.contains(b))return;const d=b.dataset;
+      if('followLyrics'in d){v.follow=true;v.pause=0;b.hidden=true;v.idx=-2;tickLyrics();}
+      else if(d.offset)Promise.resolve(engine.updateSettings({lyricsOffset:engine.settings.lyricsOffset+Number(d.offset)},false)).then(()=>{resetViews();update();});
+      else if('lsize'in d)Promise.resolve(engine.updateSettings({lyricsSize:{s:'m',m:'l',l:'s'}[engine.settings.lyricsSize]},false)).then(update);
+      else if('full'in d){try{document.fullscreenElement?document.exitFullscreen():root.requestFullscreen?.();}catch(_){}}
+      else return;
+      e.stopPropagation();
+    });
+  }
+  const lyricsTools='<div class="pd-lyricstools"><button data-follow-lyrics hidden>Volver a la línea actual</button><span><button data-offset="-250" aria-label="Retrasar letra">−</button><small>Ajuste <b data-offsetlabel>0 s</b></small><button data-offset="250" aria-label="Adelantar letra">+</button></span><button data-lsize aria-label="Cambiar tamaño de letra">Aa</button><button data-full aria-label="Pantalla completa">⛶</button></div>';
+  const lyricsBody='<div class="pd-lyricsscroll" tabindex="0" aria-label="Letra de la canción"><p class="pd-note" data-lyricsmsg role="status"></p><div data-lines class="pd-lines"></div></div>';
+  function frame(){
+    L.raf=0;if(!panel?.isConnected && !pageEl?.isConnected)return;
+    try{frameBody();}catch(_){}
+    if(S.Player.isPlaying())L.raf=requestAnimationFrame(frame);
+  }
+  function frameBody(){
+    const dur=S.Player.getDuration?.()||engine.current?.duration||0,pos=S.Player.getProgress();
+    const bar=panel?.querySelector('[data-progress]');if(bar){bar.style.setProperty('--p',dur?Math.min(1,pos/dur):0);panel.querySelector('[data-pos]').textContent=fmt(pos);panel.querySelector('[data-dur]').textContent=fmt(dur);}
+    tickLyrics();
+    if(L.sleepAt && Date.now()>=L.sleepAt){L.sleepAt=0;L.sleep=0;if(panel)panel.querySelector('[data-sleep]').value='0';if(engine.active)perform(()=>engine.stop());}
+  }
+  const startFrame=()=>{if(!L.raf && (panel?.isConnected || pageEl?.isConnected))L.raf=requestAnimationFrame(frame);};
+  const tintTargets=()=>[panel,pageEl].filter(n=>n?.isConnected);
+  const paintTint=()=>{const v=engine.settings.ambient?L.tint.get(engine.current?.image):'';tintTargets().forEach(n=>v?n.style.setProperty('--pd-tint',v):n.style.removeProperty('--pd-tint'));};
+  async function tint(){
+    if(!tintTargets().length)return;
+    const uri=engine.current?.image;if(!engine.settings.ambient || !uri){paintTint();return;}
+    if(L.tint.has(uri)){paintTint();return;}
+    if(L.tintUri===uri)return;L.tintUri=uri;
+    try{const c=await S.colorExtractor?.(engine.current.uri);L.tint.set(uri,c?.VIBRANT||c?.PROMINENT||c?.DARK_VIBRANT||'');}catch(_){L.tint.set(uri,'');}
+    paintTint();
+  }
+  function setTab(tab){
+    L.tab=tab;panel.querySelectorAll('[data-tab]').forEach(b=>{const on=b.dataset.tab===tab;b.classList.toggle('pd-selected',on);b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;});
+    panel.querySelectorAll('[data-pane]').forEach(n=>n.hidden=n.dataset.pane!==tab);
+    if(tab==='lyrics'){loadLyrics();resetViews();startFrame();queueMicrotask(tickLyrics);}
+  }
+  // Página de letras a pantalla completa de la ventana (ruta /PoorDJ), con la misma letra que el panel.
+  let pageEl,pageView;const ROUTE='/PoorDJ',spicy=()=>!!root.SpicyLyrics,ownLyrics=()=>engine.settings.lyrics && !spicy();
+  const mainView=()=>document.querySelector('.Root__main-view')||document.querySelector('#main-view');
+  const onRoute=()=>S.Platform.History?.location?.pathname===ROUTE;
+  function closePage(){pageEl?.remove();pageEl=null;}
+  function updatePage(){
+    if(!ownLyrics() || !onRoute()){if(pageEl)closePage();return;}
+    if(!pageEl?.isConnected){
+      const host=mainView();if(!host)return;
+      pageEl=document.createElement('section');pageEl.className='pd pd-page';pageEl.id='PoorDJPage';pageEl.setAttribute('aria-label','Letras');
+      pageEl.innerHTML=`<aside class="pd-pagecover"><div class="pd-cover pd-bigcover">${ICON}<img data-pcover alt="Portada actual" hidden></div><h2 data-ptitle></h2><p data-partist></p><div class="pd-transport"><button data-prev aria-label="Anterior">⏮</button><button data-toggleplay class="pd-playbtn" aria-label="Reproducir">▶</button><button data-nextsong aria-label="Siguiente">⏭</button></div><button class="pd-secondary" data-opendj>Abrir panel del DJ</button><button class="pd-secondary" data-closepage>Cerrar letras</button></aside><div class="pd-pagelyrics"><div class="pd-lyricshead"><small></small><small data-lyricssource></small></div>${lyricsBody}${lyricsTools}</div>`;
+      host.append(pageEl);pageView=addView(pageEl,()=>true);wireLyrics(pageView);
+      pageEl.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
+        if('closepage'in d)S.Platform.History.goBack?.();else if('opendj'in d)open();else if('spicy'in d)S.Platform.History.push('/SpicyLyrics');
+        else if('prev'in d)S.Player.back?.();else if('nextsong'in d)S.Player.next?.();else if('toggleplay'in d)setTimeout(()=>{S.Player.togglePlay?.();setTimeout(update,120);},0);});
+      L.uri='';
+    }
+    theme(pageEl);pageEl.dataset.lsize=engine.settings.lyricsSize;pageEl.dataset.lyrics='true';
+    const t=engine.current,img=pageEl.querySelector('[data-pcover]'),url=imageURL(t?.image);img.hidden=!url;if(url && img.getAttribute('src')!==url)img.src=url;
+    pageEl.querySelector('[data-ptitle]').textContent=t?.name||'Reproduce algo que te guste';pageEl.querySelector('[data-partist]').textContent=t?.artists.map(a=>a.name).join(', ')||'';
+    pageEl.querySelector('[data-toggleplay]').textContent=S.Player.isPlaying()?'❚❚':'▶';
+    const off=(engine.settings.lyricsOffset>0?'+':'')+(engine.settings.lyricsOffset/1000).toFixed(2).replace(/\.?0+$/,'')+' s';pageEl.querySelector('[data-offsetlabel]').textContent=off;
+    loadLyrics();startFrame();
+  }
+  const navigateLyrics=()=>{if(onRoute())S.Platform.History.goBack?.();else S.Platform.History.push(ROUTE);};
+  let lyricsButton=null;const mountedAt=Date.now();
+  const ensureButton=()=>{if(lyricsButton || !S.Playbar?.Button || Date.now()-mountedAt<2500 || !ownLyrics())return;lyricsButton=new S.Playbar.Button('Letras · POOR DJ','<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M2 3h12v1.5H2zm0 3.5h8V8H2zM2 10h12v1.5H2zm0 3.5h6V15H2z"/></svg>',navigateLyrics);};
+  const buttonTimer=setTimeout(()=>update(),2600);
+  // Subtítulo del DJ visible aunque el panel esté cerrado (también sobre otras vistas de letras).
+  const toast=document.createElement('aside');toast.className='pd-toastdj';toast.hidden=true;toast.setAttribute('role','status');toast.setAttribute('aria-live','polite');document.body.append(toast);
+
+  const unlisten=S.Platform.History?.listen?.(()=>updatePage());
   function cards(tracks,kind){
     return tracks.map(t=>`<button class="pd-choice" data-${kind}="${esc(t.uri)}" ${engine.choiceBusy?'disabled':''}><span class="pd-choicecover">${imageURL(t.image)?`<img src="${esc(imageURL(t.image))}" alt="" loading="eager">`:ICON}<span class="pd-choiceplay">▶</span></span><b>${esc(t.name)}</b><small>${esc(t.artists.map(a=>a.name).join(', '))}</small><small class="pd-evidence">${esc(evidenceLabel(t.evidence||knownEvidence(t,engine.memory[t.uri]))||t.album||'Resultado de Spotify')}</small></button>`).join('');
   }
   function update(){
-    playbar.active=engine.active;theme(mini);mini.hidden=!engine.settings.mini || !engine.active;
-    if(!panel?.isConnected)return;theme(panel);panel.dataset.playing=String(engine.active && S.Player.isPlaying());
+    playbar.active=engine.active;ensureButton();updatePage();tint();
+    const recent=narrator.text && Date.now()-(narrator.textAt||0)<7000,say=(narrator.speaking || recent) && !!narrator.text && !panel?.isConnected;toast.hidden=!say;if(say && !narrator.speaking){clearTimeout(L.toastTimer);L.toastTimer=setTimeout(()=>update(),7100);}if(say){toast.dataset.accent=engine.settings.accent;toast.innerHTML=`<b>DJ POOR</b> ${esc(narrator.text)}`;}theme(mini);mini.hidden=!engine.settings.mini || !engine.active || !!panel?.isConnected;
+    if(!panel?.isConnected)return;theme(panel);panel.dataset.lyrics=String(engine.settings.lyrics);panel.dataset.lsize=engine.settings.lyricsSize;panel.dataset.playing=String(engine.active && S.Player.isPlaying());
     text('live',narrator.speaking?'DJ hablando':engine.choiceBusy?'Reproduciendo':engine.active?(engine.busy?'Eligiendo':'DJ activo'):'Tú tienes el control');
     panel.querySelector('[data-live]').classList.toggle('pd-active',engine.active);
-    panel.querySelector('.pd-reference').hidden=!engine.active;
+    panel.querySelector('.pd-reference').hidden=!engine.active;panel.querySelector('[data-follow]').hidden=engine.active;panel.querySelector('[data-intent]').hidden=!engine.active;
     panel.querySelector('.pd-feedback').hidden=!engine.active;
     panel.querySelector('.pd-queuehead').hidden=!engine.active;
     panel.querySelector('[data-next]').hidden=!engine.active;
     panel.querySelector('[data-session]').hidden=!engine.active && !engine.sessionHeardMs;
     panel.querySelector('[data-savedmix]').hidden=!engine.mixPlaylist;
     text('title',engine.current?.name||'Reproduce algo que te guste');text('artist',engine.current?.artists.map(a=>a.name).join(', ')||'Tu próxima sesión empieza contigo.');
-    const img=panel.querySelector('[data-cover]'),url=imageURL(engine.current?.image);img.hidden=!url;if(url && img.getAttribute('src')!==url)img.src=url;
+    const img=panel.querySelector('[data-cover]'),url=imageURL(engine.current?.image);img.hidden=!url || !!narrator.speaking;if(url && img.getAttribute('src')!==url)img.src=url;
     text('reference',engine.anchor?`${engine.anchor.name} · ${engine.anchor.artists.map(a=>a.name).join(', ')}`:'Elige una referencia al empezar.');
     const labels=intentLabels(engine.intent),chips=panel.querySelector('[data-intent]');if(chips._key!==JSON.stringify(labels)){chips._key=JSON.stringify(labels);chips.innerHTML=labels.map(label=>`<span class="pd-chip">${esc(label)}</span>`).join('');}
     text('status',engine.status);panel.querySelector('[data-status]').classList.toggle('pd-error',engine.error);
-    const toggle=panel.querySelector('[data-toggle]');toggle.textContent=engine.active?'Terminar DJ':engine.intent.known?'Elegir música conocida':'Empezar DJ';toggle.disabled=!!engine.choiceBusy || engine.busy;toggle.hidden=engine.choosing && !engine.active;
+    const toggle=panel.querySelector('[data-toggle]');toggle.classList.toggle('pd-stop',engine.active);toggle.textContent=engine.active?'Terminar DJ':engine.intent.known?'Elegir música conocida':'Empezar DJ';toggle.disabled=!!engine.choiceBusy || engine.busy;toggle.hidden=engine.choosing && !engine.active;
     panel.querySelector('[data-restore]').hidden=!(engine.captured || engine.managed.length && !engine.active);panel.querySelector('[data-restore]').disabled=engine.busy || !!engine.choiceBusy;
     panel.querySelector('[data-refresh]').disabled=!engine.active || engine.busy;
     panel.querySelector('[data-undo]').disabled=!engine.undoVote;
@@ -915,35 +1193,59 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
     text('caption',narrator.text||'');panel.querySelector('[data-narration]').hidden=!narrator.text;
     const native=transitions.state();text('transitionstatus',native.enabled?`Crossfade de Spotify: ${native.seconds} s. Se priorizan tempo, tono y nivel cuando hay datos.`:'Crossfade de Spotify apagado. Se prioriza continuidad musical cuando hay datos.');panel.querySelector('[data-applytransition]').disabled=!native.available;panel.querySelector('[data-restoretransition]').disabled=!native.available;
     text('savedmix',engine.mixPlaylist?`${engine.mixPlaylist.name} · ${engine.mixPlaylist.count} canciones`:'');panel.querySelector('[data-openmix]').hidden=!engine.mixPlaylist;
-    text('voicestatus',narrator.voice?`Voz local: ${narrator.voice.name}`:'Este cliente no ofrece voz local en español. Los comentarios siguen por escrito.');
+    text('voicestatus',!narrator.voice?'Este cliente no ofrece voz en español. Los comentarios siguen por escrito.':narrator.voice.localService?'':'Voz en línea: el texto del comentario se envía a su proveedor.');panel.querySelector('[data-voicestatus]').hidden=!panel.querySelector('[data-voicestatus]').textContent;
+    const pick=panel.querySelector('[data-voicepick]'),vlist=narrator.voices(),pickKey=JSON.stringify(vlist.map(v=>v.name));
+    if(pick._key!==pickKey){pick._key=pickKey;pick.innerHTML='<option value="">Automática (local)</option><option value="off">Sin voz (solo subtítulos)</option>'+vlist.map(v=>`<option value="${esc(v.name)}">${esc(v.name)} · ${esc(v.lang)}${v.localService?'':' · en línea'}</option>`).join('');}
+    if(document.activeElement!==pick)pick.value=!engine.settings.voice?'off':vlist.some(v=>v.name===engine.settings.voiceName)?engine.settings.voiceName:'';
+    // El DJ aparece como una pista más mientras habla.
+    const talking=!!narrator.speaking;panel.dataset.dj=String(talking);
+    if(talking){text('title','DJ POOR');text('artist',narrator.text||'');panel.querySelector('[data-cover]').hidden=true;}
+    panel.querySelector('[data-nowlabel]').textContent=talking?'DJ en directo':'Sonando ahora';
     const voice=panel.querySelector('[data-voice]');voice.disabled=!narrator.voice;voice.textContent=narrator.enabled?'Silenciar voz':'Activar voz';voice.setAttribute('aria-pressed',String(narrator.enabled));
     panel.querySelector('[data-recovervolume]').hidden=!recovery();
     panel.querySelectorAll('[data-select]').forEach(input=>{if(document.activeElement!==input)input.value=engine.settings[input.dataset.select];});
     panel.querySelectorAll('[data-setting]').forEach(input=>{input.checked=engine.settings[input.dataset.setting];input.disabled=input.dataset.setting==='takeover' && (engine.active || engine.busy);});
-    panel.querySelector('[data-sessionexport]').disabled=!engine.sessionList.length;
+    panel.querySelector('[data-savesession]').disabled=engine.sessionList.length<2 || engine.busy;
+    panel.querySelector('[data-tabs]').hidden=!ownLyrics();if(!ownLyrics() && L.tab==='lyrics')setTab('dj');panel.querySelector('[data-openspicy]').hidden=!spicy();panel.querySelectorAll('[data-setting=lyrics],[data-setting=lyricsExternal]').forEach(i=>i.closest('label').hidden=spicy());panel.querySelector('[data-lrclibnote]').hidden=spicy();
+    const play=panel.querySelector('[data-toggleplay]');play.textContent=S.Player.isPlaying()?'❚❚':'▶';play.setAttribute('aria-label',S.Player.isPlaying()?'Pausar':'Reproducir');
+    text('offsetlabel',(engine.settings.lyricsOffset>0?'+':'')+(engine.settings.lyricsOffset/1000).toFixed(2).replace(/\.?0+$/,'')+' s');
+    panel.querySelector('[data-lyricsmini]').textContent=engine.current?.name?`${engine.current.name} · ${engine.current.artists.map(a=>a.name).join(', ')}`:'';
+    loadLyrics();startFrame();
   }
   function open(){
     if(panel?.isConnected){update();return;}
     panel=document.createElement('section');panel.className='pd';
     panel.innerHTML=`<header class="pd-header"><div class="pd-brand">${ICON}<h1>POOR DJ <small>${VERSION}</small></h1></div><button class="pd-voice" data-voice></button></header><div class="pd-byline"><span>Tu música. Tu mando.</span><span class="pd-live" data-live></span></div>
-      <div class="pd-playing"><div class="pd-cover">${ICON}<img data-cover alt="Portada actual" hidden></div><div><small>Sonando ahora <span class="pd-bars" aria-hidden="true"><i></i><i></i><i></i></span></small><h2 data-title></h2><p data-artist></p></div></div>
-      <div class="pd-reference"><small>Referencia de la sesión</small><p data-reference></p></div><div class="pd-chips" data-intent aria-label="Instrucciones vigentes"></div>
-      <form data-command class="pd-command"><label for="pd-command">¿Qué quieres escuchar?</label><div><input id="pd-command" name="command" autocomplete="off" maxlength="240" placeholder="Yoko, L A K E N O S H I o sigue esta canción" required><button type="submit">Buscar / aplicar</button></div></form>
-      <p class="pd-note">Busca una canción o artista, o escribe una dirección para la mezcla. Tú eliges cuándo empezar.</p>
-      <button class="pd-follow" aria-label="Seguir esta canción" data-follow>Seguir esta canción ↗</button>
-      <div data-matches hidden></div><section data-artistmenu class="pd-artistmenu" hidden aria-label="Mezcla del artista"></section><button data-closesearch class="pd-secondary" hidden>Cerrar resultados</button>
-      <div class="pd-presets" role="group" aria-label="Selección musical"><button data-known="true">Solo música conocida</button><button data-known="false">Descubrir afines</button></div>
+      <div class="pd-tabs" role="tablist" data-tabs aria-label="Vista"><button role="tab" data-tab="dj" aria-selected="true" class="pd-selected">DJ</button><button role="tab" data-tab="lyrics" aria-selected="false" tabindex="-1">Letras</button></div>
+      <div class="pd-playing"><div class="pd-cover">${ICON}<img data-cover alt="Portada actual" hidden></div><div><small><span data-nowlabel>Sonando ahora</span> <span class="pd-bars" aria-hidden="true"><i></i><i></i><i></i></span></small><h2 data-title></h2><p data-artist></p></div></div>
+      <div class="pd-transport"><button data-prev aria-label="Anterior">⏮</button><button data-toggleplay class="pd-playbtn" aria-label="Reproducir">▶</button><button data-nextsong aria-label="Siguiente">⏭</button><button data-openspicy hidden aria-label="Abrir letras en Spicy Lyrics">Letras ↗</button><span data-pos>0:00</span><div class="pd-progress" data-progress role="progressbar" aria-label="Progreso"><i></i></div><span data-dur>0:00</span></div>
+      <div data-pane="lyrics" hidden class="pd-lyricspane"><div class="pd-lyricshead"><small data-lyricsmini></small><small data-lyricssource></small></div>${lyricsBody}${lyricsTools}<div class="pd-lyricstools"><button data-openpage>Abrir letras en la ventana</button></div></div>
+      <div data-pane="dj">
+      <section class="pd-start" aria-label="Empezar"><div class="pd-presets" role="group" aria-label="Selección musical"><button data-known="true">Solo música conocida</button><button data-known="false">Descubrir afines</button></div>
+      <button class="pd-primary" data-toggle></button><button class="pd-follow" aria-label="Seguir esta canción" data-follow>Seguir esta canción ↗</button><button class="pd-secondary" data-restore hidden>Restaurar cola guardada</button><p class="pd-status" data-status role="status" aria-live="polite"></p></section>
       <section data-picker class="pd-picker" hidden aria-label="Elige tu primera canción"><h3>Tu música conocida</h3><p data-pickernote></p><div class="pd-cards" data-cards></div><div class="pd-pickeractions"><button data-again>Otra vez</button><button data-resetdeck hidden>Reiniciar selección</button><button data-closepicker>Cancelar</button></div></section>
+      <div class="pd-reference"><small>Referencia de la sesión</small><p data-reference></p></div><div class="pd-chips" data-intent aria-label="Instrucciones vigentes"></div>
       <div class="pd-feedback"><button data-feedback="more">Más como esta</button><button data-feedback="less">No encaja</button><details class="pd-feedbackmore"><summary>Más opciones</summary><button data-feedback="artist">Este artista no, por hoy</button><button data-feedback="repeat">Demasiado repetida</button><button data-undo>Deshacer</button></details></div>
-      <div class="pd-queuehead"><h3>A continuación</h3><button data-refresh class="pd-other">Otra sugerencia</button></div><div data-next></div>
-      <button class="pd-primary" data-toggle></button><button class="pd-secondary" data-restore hidden>Restaurar cola guardada</button><p class="pd-status" data-status role="status" aria-live="polite"></p>
-      <section class="pd-narration" data-narration hidden aria-label="Comentarios del DJ"><p data-caption aria-live="polite"></p></section><p class="pd-note" data-session></p>
+      <div class="pd-queuehead"><h3>A continuación</h3><button data-refresh class="pd-other">Otra sugerencia</button></div><div data-next></div><div data-next></div>
+      <form data-command class="pd-command"><label for="pd-command">¿Qué quieres escuchar?</label><div><input id="pd-command" name="command" autocomplete="off" maxlength="240" placeholder="Yoko, L A K E N O S H I o sigue esta canción" required><button type="submit">Buscar</button></div></form>
+      <div data-matches hidden></div><section data-artistmenu class="pd-artistmenu" hidden aria-label="Mezcla del artista"></section><button data-closesearch class="pd-secondary" hidden>Cerrar resultados</button>
+      <section class="pd-narration" data-narration hidden aria-label="Comentarios del DJ"><p data-caption aria-live="polite"></p></section><p class="pd-note" data-session></p><p class="pd-note" data-session></p>
       <p class="pd-note" data-savedmix></p><button class="pd-secondary" data-openmix hidden>Abrir última playlist guardada</button>
-      <details class="pd-customize"><summary>Personalizar y ajustes</summary><p class="pd-note" data-voicestatus></p><details class="pd-details"><summary>Transiciones</summary><label>Continuidad musical<select data-select="flowStrength"><option value="40">Equilibrada</option><option value="65">Suave</option><option value="90">Más continuidad</option></select></label><p data-transitionstatus></p><label>Solapamiento nativo<select data-crossfade><option value="2">Breve · 2 segundos</option><option value="4" selected>Suave · 4 segundos</option><option value="6">Continua · 6 segundos</option><option value="0">Sin solapamiento</option></select></label><button data-applytransition>Aplicar en Spotify</button><button data-restoretransition>Restaurar ajuste anterior</button><p>Este ajuste también afecta a Spotify fuera del DJ. Automix puede decidir las transiciones en playlists compatibles. POOR DJ no baja el volumen ni salta el final de las canciones.</p></details>
-      <details class="pd-details"><summary>Ajustes</summary><div class="pd-options"><label>Acento<select data-select="accent"><option value="spotify">Verde Spotify</option><option value="theme">Mi tema</option><option value="blue">Azul</option><option value="violet">Violeta</option><option value="rose">Rosa</option></select></label><label>Canciones pendientes<select data-select="queueSize"><option>1</option><option>2</option><option>3</option></select></label></div>${[['mini','Control compacto'],['compact','Panel compacto'],['explicit','Permitir contenido explícito'],['autoLearn','Aprender de mi escucha'],['takeover','Suspender mi cola manual al iniciar (opcional)']].map(([key,label])=>`<label class="pd-check"><input type="checkbox" data-setting="${key}">${label}</label>`).join('')}<p>Spotify controla las transiciones nativas. El DJ no cambia tu volumen ni adelanta canciones.</p><button data-settings>Abrir configuración de Spotify</button><button data-recovervolume hidden>Recuperar volumen anterior</button></details>
-      <details class="pd-details"><summary>Etiquetas musicales</summary><p>Las etiquetas son tuyas. Para filtrar por género, etiqueta las canciones de tu playlist actual; no deducimos género por tempo ni tus creencias por lo que escuchas.</p><form data-tag><label for="pd-tag">Estilos, separados por coma</label><input id="pd-tag" maxlength="100" placeholder="reggaetón, trap"><button type="submit">Etiquetar playlist actual y canción</button></form></details>
-      <details class="pd-details"><summary>Mi biblioteca y fuentes</summary><p data-library></p><button data-librarysync>Actualizar Me gusta y playlists</button><select data-playlists aria-label="Playlist de mi biblioteca"></select><button data-loadplaylist>Leer esta playlist</button><p>Solo usamos Me gusta, playlists y escuchas registradas como música conocida. Leemos una parte limitada; puedes elegir una playlist para consultar hasta 300 canciones. Spotify no ofrece aquí tus estadísticas completas.</p></details><details class="pd-details"><summary>Mis datos</summary><p>Playlist, escucha registrada y voto son fuentes diferentes de familiaridad. No consultamos todo tu historial de Spotify. Tus datos y la lógica del DJ permanecen en este cliente.</p><div class="pd-profile"><button data-export>Exportar perfil</button><button data-import>Importar perfil</button><button data-sessionexport>Guardar sesión</button><button data-reset>Borrar aprendizaje</button><button data-cacheclear>Borrar caché acústica</button><input data-file type="file" accept=".json,application/json" hidden></div><p>POOR DJ ${VERSION} · sin servidor propio, IA ni claves adicionales.</p></details>
-      <details class="pd-details"><summary>Cómo funciona</summary><p>Elige una canción conocida o inicia desde lo que suena. Escribe instrucciones combinables y revisa las etiquetas. Una elección manual pausa el DJ y retira sus sugerencias. Terminar devuelve la cola suspendida; las playlists nunca se editan.</p><p>Prueba «solo conocidas y más variedad», «reggaetón y más variedad», «pon SIN UN PLAN (TEGOCALDERON) de Isma» o «termina el DJ». Una orden incompleta no se aplica a medias.</p></details></details>`;
+      <details class="pd-customize"><summary>Ajustes</summary>
+        <div class="pd-options"><label>Voz del DJ<select data-voicepick></select></label><label>El DJ comenta<select data-select="talk"><option value="start">Al empezar y al cambiar</option><option value="few">Cada 5 canciones</option><option value="often">Cada 3 canciones</option></select></label><label>Canciones pendientes<select data-select="queueSize"><option>1</option><option>2</option><option>3</option></select></label><label>Color<select data-select="accent"><option value="spotify">Verde Spotify</option><option value="theme">Mi tema</option><option value="violet">Violeta</option></select></label></div>
+        <p class="pd-note" data-voicestatus></p>
+        ${[['lyrics', 'Mostrar letras sincronizadas'], ['explicit', 'Permitir contenido explícito'], ['autoLearn', 'Aprender de mi escucha'], ['mini', 'Control flotante']].map(([key,label])=>`<label class="pd-check"><input type="checkbox" data-setting="${key}">${label}</label>`).join('')}
+        <details class="pd-details"><summary>Avanzado</summary>
+          <label>Continuidad entre canciones<select data-select="flowStrength"><option value="40">Equilibrada</option><option value="65">Suave</option><option value="90">Más continuidad</option></select></label>
+          <label>Solapamiento nativo de Spotify<select data-crossfade><option value="0">Sin solapamiento</option><option value="2">2 segundos</option><option value="4" selected>4 segundos</option><option value="6">6 segundos</option></select></label><p data-transitionstatus></p><div class="pd-profile"><button data-applytransition>Aplicar en Spotify</button><button data-restoretransition>Restaurar</button></div><p class="pd-note">El solapamiento también afecta a Spotify fuera del DJ. Con la transición automática, el DJ lo ajusta (0 a 6 s) según lo bien que encajen dos canciones y lo restaura al terminar la sesión. Nunca cambia tu volumen ni adelanta canciones.</p><button data-recovervolume hidden>Recuperar volumen anterior</button>
+          <label>Terminar el DJ en<select data-sleep><option value="0">Sin temporizador</option><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60">1 hora</option><option value="120">2 horas</option></select></label>
+          ${[['autoFade', 'Transición automática según cada pareja de canciones'], ['takeover', 'Suspender mi cola manual al iniciar'], ['lyricsExternal', 'Buscar letras fuera de Spotify (LRCLIB)']].map(([key,label])=>`<label class="pd-check"><input type="checkbox" data-setting="${key}">${label}</label>`).join('')}<p class="pd-note" data-lrclibnote>LRCLIB está apagado por defecto: al activarlo se envían título, artista, álbum y duración a lrclib.net solo si Spotify no tiene letra. Las voces «en línea» envían el texto del comentario a su proveedor.</p>
+          <form data-tag><label for="pd-tag">Etiquetas de estilo, separadas por coma</label><input id="pd-tag" maxlength="100" placeholder="reggaetón, trap"><button type="submit">Etiquetar playlist actual y canción</button></form>
+          <p data-library></p><div class="pd-profile"><button data-librarysync>Actualizar Me gusta y playlists</button><select data-playlists aria-label="Playlist de mi biblioteca"></select><button data-loadplaylist>Leer playlist</button></div>
+          <div class="pd-profile"><button data-diagnose>Comprobar compatibilidad</button></div><ul class="pd-diag" data-diagresult></ul>
+          <p class="pd-note">Tus datos y la lógica del DJ permanecen en este cliente. POOR DJ ${VERSION}.</p><div class="pd-profile"><button data-export>Exportar perfil</button><button data-import>Importar perfil</button><button data-savesession>Guardar sesión como playlist</button><button data-reset>Borrar aprendizaje</button><button data-cacheclear>Borrar caché acústica</button><input data-file type="file" accept=".json,application/json" hidden></div>
+        </details></details></div>
+      <footer class="pd-credit">Hecho por <b>KROMBYTE</b> · POOR DJ ${VERSION}</footer>`;
     panel.onclick=event=>{
       event.stopPropagation();
       const button=event.target.closest('button');if(!button || !panel.contains(button))return;
@@ -968,32 +1270,54 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
       else if(d.feedback)perform(()=>engine.feedbackFor(engine.current,d.feedback));else if('undo'in d)perform(()=>engine.undoFeedback());
       else if(d.reject)perform(()=>engine.feedbackFor(engine.preview.find(t=>t.uid===d.reject),'less'));
       else if(d.pin)engine.reserve(engine.preview.find(t=>t.uid===d.pin));
+      else if(d.tab)setTab(d.tab);
+      else if('openspicy'in d){S.PopupModal.hide();S.Platform.History.push('/SpicyLyrics');}
+      else if('openpage'in d){S.PopupModal.hide();if(S.Platform.History.location?.pathname!==ROUTE)S.Platform.History.push(ROUTE);}
+      else if('spicy'in d){S.PopupModal.hide();S.Platform.History.push('/SpicyLyrics');}
+      else if('prev'in d)S.Player.back?.();else if('nextsong'in d)S.Player.next?.();else if('toggleplay'in d){S.Player.togglePlay?.();setTimeout(()=>{update();startFrame();},120);}
+      else if('lyricsclear'in d){lyrics.clear();L.uri='';loadLyrics();engine.notify('Listo: se volverán a buscar las letras.');}
       else if(d.example){panel.querySelector('#pd-command').value=d.example;panel.querySelector('#pd-command').focus();}
       else if('voice'in d){narrator.toggle();engine.updateSettings({voice:narrator.enabled},false);}
       else if('settings'in d){S.PopupModal.hide();S.Platform.History.push('/preferences');}
       else if('recovervolume'in d)recoverVolume();
       else if('export'in d)download(engine.exportProfile(),'poor-dj-profile.json');
-      else if('sessionexport'in d)download({schema:1,version:VERSION,heardMs:engine.sessionHeardMs,tracks:engine.sessionList.map(t=>({uri:t.uri,name:t.name,artists:t.artists}))},'poor-dj-session.json');
+      else if('savesession'in d)perform(()=>engine.saveSession());
+      else if('diagnose'in d)perform(async()=>{const out=panel.querySelector('[data-diagresult]');out.textContent='Comprobando…';const r=await diagnose();out.innerHTML=r.rows.map(x=>`<li class="${x.ok===false?'pd-error':''}">${x.ok===false?'✕':x.ok?'✓':'·'} <b>${esc(x.name)}</b>: ${esc(x.detail)}</li>`).join('')+`<li><b>${r.problems?r.problems+' problema(s)':'Todo responde'}</b></li>`;});
       else if('import'in d)panel.querySelector('[data-file]').click();
       else if('reset'in d && root.confirm('¿Borrar el aprendizaje local de POOR DJ?')){engine.memory={};engine.contexts={};engine.preferences={};engine.undoVote=null;engine.save();engine.refresh();}
       else if('cacheclear'in d){audio.clear();engine.notify('Caché acústica borrada.');}
     };
+    panelView=addView(panel.querySelector('[data-pane=lyrics]'),()=>L.tab==='lyrics');wireLyrics(panelView);
+    panel.querySelector('[data-tabs]').onkeydown=e=>{if(e.key==='ArrowRight' || e.key==='ArrowLeft'){const t=L.tab==='dj'?'lyrics':'dj';setTab(t);panel.querySelector(`[data-tab="${t}"]`).focus();}};
+    panel.querySelector('[data-progress]').onclick=e=>{const r=e.currentTarget.getBoundingClientRect(),d=S.Player.getDuration?.();if(d)seek(Math.round(d*Math.min(1,Math.max(0,(e.clientX-r.left)/r.width))));};
+    panel.querySelector('[data-sleep]').onchange=e=>{L.sleep=Number(e.target.value);L.sleepAt=L.sleep?Date.now()+L.sleep*60000:0;engine.notify(L.sleep?`El DJ terminará en ${L.sleep} minutos.`:'Temporizador apagado.');};
     panel.querySelector('[data-command]').onsubmit=event=>{event.preventDefault();perform(()=>engine.command(panel.querySelector('#pd-command').value));};
     panel.querySelector('[data-tag]').onsubmit=event=>{event.preventDefault();perform(()=>engine.tagPlaylist(panel.querySelector('#pd-tag').value.split(',').map(words).filter(Boolean)));};
+    panel.querySelector('[data-voicepick]').onchange=e=>{
+      const v=e.target.value,on=v!=='off';if(narrator.enabled!==on)narrator.toggle();
+      if(on){narrator.prefer(v);engine.updateSettings({voice:true,voiceName:v},false);voiceGate.run('next',{name:engine.current?.name||'tu canción',artists:engine.current?.artists||[],evidence:'tu playlist'},engine.intent,{local:true});}
+      else engine.updateSettings({voice:false},false);
+      update();};
     panel.querySelectorAll('[data-select]').forEach(input=>input.onchange=()=>perform(()=>engine.updateSettings({[input.dataset.select]:['queueSize','flowStrength'].includes(input.dataset.select)?Number(input.value):input.value},input.dataset.select==='queueSize')));
-    panel.querySelectorAll('[data-setting]').forEach(input=>input.onchange=()=>perform(()=>engine.updateSettings({[input.dataset.setting]:input.checked},['explicit','takeover'].includes(input.dataset.setting))));
-    panel.querySelector('[data-file]').onchange=event=>perform(async()=>{const file=event.target.files[0];if(!file)return;if(file.size>2000000)throw Error('El perfil supera 2 MB');await engine.importProfile(JSON.parse(await file.text()));narrator.enabled=engine.settings.voice;event.target.value='';});
-    S.PopupModal.display({title:'POOR DJ',content:panel,isLarge:true});update();transitions.refresh().then(update).catch(()=>{});panel.querySelector('#pd-command').focus();
+    panel.querySelectorAll('[data-setting]').forEach(input=>input.onchange=()=>perform(()=>{if(input.dataset.setting==='lyricsExternal')L.uri='';return engine.updateSettings({[input.dataset.setting]:input.checked},['explicit','takeover'].includes(input.dataset.setting));}));
+    panel.querySelector('[data-file]').onchange=event=>perform(async()=>{const file=event.target.files[0];if(!file)return;if(file.size>2000000)throw Error('El perfil supera 2 MB');await engine.importProfile(JSON.parse(await file.text()));narrator.enabled=engine.settings.voice;narrator.prefer(engine.settings.voiceName);event.target.value='';});
+    S.PopupModal.display({title:'POOR DJ',content:panel,isLarge:true});L.tab='dj';L.uri='';update();startFrame();transitions.refresh().then(update).catch(()=>{});panel.querySelector('#pd-command').focus();
   }
-  return {open,update,dispose:()=>{if(panel?.isConnected)S.PopupModal.hide();panel?.remove();mini.remove();style.remove();playbar.deregister?.();}};
+  return {open,update,openLyrics:()=>{if(!onRoute())S.Platform.History.push(ROUTE);},dispose:()=>{clearTimeout(buttonTimer);clearTimeout(L.toastTimer);toast.remove();closePage();unlisten?.();lyricsButton?.deregister?.();cancelAnimationFrame(L.raf);L.raf=0;if(panel?.isConnected)S.PopupModal.hide();panel?.remove();mini.remove();style.remove();playbar.deregister?.();}};
 }
 
 const ICON='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2"/><path d="M5 12a7 7 0 0 1 7-7m0 14a7 7 0 0 0 7-7M7 15V9h3"/></svg>';
 const esc=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const imageURL=uri=>uri?.startsWith('spotify:image:')?`https://i.scdn.co/image/${uri.split(':').pop()}`:uri;
+let bootTries=0;
 async function boot(){
   const S=root.Spicetify;
-  if(!S?.Player?.data || !S?.CosmosAsync || !S?.Playbar?.Button || !S?.PopupModal || !S?.Platform?.LocalStorageAPI){setTimeout(boot,500);return;}
+  const needs={'Player':S?.Player?.data,'CosmosAsync':S?.CosmosAsync,'Playbar.Button':S?.Playbar?.Button,'PopupModal':S?.PopupModal,'Platform.LocalStorageAPI':S?.Platform?.LocalStorageAPI};
+  const missing=Object.keys(needs).filter(k=>!needs[k]);
+  if(missing.length){
+    if(++bootTries===120)try{S?.showNotification?.('POOR DJ no pudo iniciarse: tu Spicetify no ofrece '+missing.join(', ')+'. Actualiza Spicetify y reinicia Spotify.',true);}catch(_){}
+    if(bootTries<=120)setTimeout(boot,500);return;
+  }
   if(root.PoorDJ?.version===VERSION)return;
   if(root.PoorMansDJ){S.showNotification?.('POOR DJ: elimina la instalación duplicada y reinicia Spotify.',true);return;}
   const storage=S.Platform.LocalStorageAPI,requests=new RequestCache(),library=new MusicLibrary(S.Platform,requests);
@@ -1078,6 +1402,13 @@ async function boot(){
     return unique;
   }
   let saved={};try{saved=storage.getItem('poor-dj-v3')||storage.getItem('poor-dj-v2')||storage.getItem('poor-mans-dj-v1')||{};if(!storage.getItem('poor-dj-v3'))storage.setItem('poor-dj-before-v3',saved);}catch(_){}
+  const lyrics=new LyricsProvider({
+    spotify:async(id,track)=>{const img=track.image?imageURL(track.image):'';const base=`https://spclient.wg.spotify.com/color-lyrics/v2/track/${id}`;const q='?format=json&vocalRemoval=false&market=from_token';
+      try{return await S.CosmosAsync.get(img?`${base}/image/${encodeURIComponent(img)}${q}`:base+q);}catch(e){if(img && !/404/.test(String(e?.status||e?.message)))return S.CosmosAsync.get(base+q);throw e;}},
+    external:async track=>{const c=new AbortController(),timer=setTimeout(()=>c.abort(),5000);try{const p=new URLSearchParams({track_name:track.name,artist_name:track.artists[0]?.name||'',album_name:track.album||'',duration:String(Math.round((track.duration||0)/1000))});const r=await fetch('https://lrclib.net/api/get?'+p,{signal:c.signal});if(r.status===404)return null;if(!r.ok)throw Error('LRCLIB '+r.status);return await r.json();}finally{clearTimeout(timer);}},
+    saved:(()=>{try{return storage.getItem('poor-dj-lyrics-misses')||{};}catch(_){return {};}})(),
+    persist:data=>{try{storage.setItem('poor-dj-lyrics-misses',data);}catch(_){}}
+  });
   let view,narrator,voiceGate,internalPlay=false,stopped=false,reconcile=null,progressUI=0;
   const api=()=>typeof S.Platform.PlayerAPI?.play==='function'?S.Platform.PlayerAPI:S.Player.origin;
   async function play(track){
@@ -1112,11 +1443,11 @@ async function boot(){
   }
   async function createMix(artist,mode,tracks){
     const P=S.Platform;if(!P.RootlistAPI?.createPlaylist || !P.PlaylistAPI?.add || !P.RootlistAPI?.setPublishedState)throw Error('Este cliente no permite guardar una playlist privada.');
-    const name=`POOR DJ · ${artist.name} · ${mode==='only'?'Artista':'Aleatorio'}`;
+    const name=mode==='session'?`POOR DJ · ${artist.name}`:`POOR DJ · ${artist.name} · ${mode==='only'?'Artista':'Aleatorio'}`;
     const pending=storage.getItem('poor-dj-pending-mix'),key=artist.uri+':'+mode;
     const uri=pending?.key===key?pending.uri:await P.RootlistAPI.createPlaylist(name,{after:'end'},true);
     if(!uri?.startsWith('spotify:playlist:'))throw Error('Spotify no confirmó la creación de la playlist.');
-    const planned=mixUris(pending,key,tracks);storage.setItem('poor-dj-pending-mix',{key,uri,name,tracks:planned});
+    const planned=mixUris(pending,key,tracks,mode==='session'?100:24);storage.setItem('poor-dj-pending-mix',{key,uri,name,tracks:planned});
     await P.RootlistAPI.setPublishedState(uri,false);
     const existing=await P.PlaylistAPI.getContents(uri,{offset:0,limit:100}),present=new Set((existing.items||[]).map(t=>t.uri));
     const missing=planned.filter(uri=>!present.has(uri));if(missing.length)await P.PlaylistAPI.add(uri,missing,{after:'end'});
@@ -1131,14 +1462,15 @@ async function boot(){
   const pauseMusic=typeof S.Platform.PlayerAPI?.pause==='function'?()=>S.Platform.PlayerAPI.pause():typeof S.Player.pause==='function'?()=>S.Player.pause():null;
   const resumeMusic=typeof S.Platform.PlayerAPI?.resume==='function'?()=>S.Platform.PlayerAPI.resume():typeof S.Player.play==='function'?()=>S.Player.play():null;
   voiceGate=new VoiceGate(narrator,{playing:()=>S.Player.isPlaying(),uri:()=>normalize(S.Player.data?.item)?.uri,device:()=>S.Platform.ConnectAPI?.getState()?.activeDevice?.id,pause:pauseMusic?async()=>{await pauseMusic();for(let i=0;i<20 && S.Player.isPlaying();i++)await sleep(50);if(S.Player.isPlaying())throw Error('No se confirmó la pausa');}:null,resume:resumeMusic});
-  engine.onNarrate=event=>voiceGate.run(event,engine.anchor||engine.current,engine.intent,{local:localPlayback()});
+  narrator.prefer(engine.settings.voiceName);
+  engine.onNarrate=event=>{const c=engine.current,seed=event==='next' && c?{...c,evidence:evidenceLabel(knownEvidence(c,engine.memory[c.uri])),plays:engine.memory[c.uri]?.plays||0,minutes:Math.floor(engine.sessionHeardMs/60000),styles:[...(c.styles||[]),...(engine.tags[c.uri]||[])],prevAudio:engine.recent.at(-2)?.audio,hour:new Date().getHours()}:engine.anchor||c;return voiceGate.run(event,seed,engine.intent,{local:localPlayback()});};
   const playGuards=[...new Set([S.Platform.PlayerAPI,S.Player.origin].filter(Boolean))].map(player=>guardPlay(player,()=>{
     if(internalPlay)return null;
     engine.commandGeneration++;engine.choosing=false;engine.commandChoices=[];engine.commandArtists=[];engine.artistMenu=null;voiceGate.cancel();
     return engine.active || engine.managed.length?engine.yieldToUser():null;
   }));
   const recovery=()=>{try{return storage.getItem('poor-dj-volume-recovery');}catch(_){return null;}};
-  view=mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume:()=>{const r=recovery(),device=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;if(r && localPlayback() && (!r.device || r.device===device) && typeof S.Player.setVolume==='function'){S.Player.setVolume(clamp(r.volume,0,1));storage.setItem('poor-dj-volume-recovery',null);engine.notify('Volumen anterior recuperado.');}else engine.notify('Recupera el volumen en el dispositivo original.',true);}});
+  view=mountUI(S,engine,{diagnose:()=>root.PoorDJ.diagnose(),lyrics,audio,queue,narrator,voiceGate,library,transitions,recovery,recoverVolume:()=>{const r=recovery(),device=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;if(r && localPlayback() && (!r.device || r.device===device) && typeof S.Player.setVolume==='function'){S.Player.setVolume(clamp(r.volume,0,1));storage.setItem('poor-dj-volume-recovery',null);engine.notify('Volumen anterior recuperado.');}else engine.notify('Recupera el volumen en el dispositivo original.',true);}});
   engine.save();
   const sample=()=>{if(stopped || engine.interrupted)return;try{if(!engine.current?.name || !engine.current?.artists.length || !engine.current?.image)observe();engine.sample(S.Player.getProgress(),S.Player.isPlaying());if(Date.now()-progressUI>5000){progressUI=Date.now();view.update();}}catch(_){};};
   const observe=()=>{
@@ -1154,12 +1486,30 @@ async function boot(){
     const nextDevice=S.Platform.ConnectAPI?.getState()?.activeDevice?.id;
     if(nextDevice!==device){device=nextDevice;voiceGate.cancel();engine.commandGeneration++;if(engine.active)engine.yieldToUser();}
     if(engine.active && !engine.busy && !engine.interrupted){const q=queue();if(q){engine.sync(q);engine.reconcileManual(q);engine.fill(false,q);}}
+    autoFade();
   };
   // Spotify exposes no documented, stable queue event; active-only fallback.
-  engine.onUpdate=()=>{if(engine.active && !reconcile)reconcile=setInterval(reconcileQueue,1000);if(!engine.active && reconcile){clearInterval(reconcile);reconcile=null;}view.update();};
+  // Transición automática: ajusta el solapamiento nativo según la pareja actual → siguiente y lo restaura al terminar.
+  let fadeBusy=false,fadeSeconds=null,fadeWarned=false;
+  async function autoFade(){
+    if(fadeBusy)return;
+    if(!engine.active || !engine.settings.autoFade){if(fadeSeconds!==null){fadeBusy=true;fadeSeconds=null;try{await transitions.restore();}catch(_){}finally{fadeBusy=false;}}return;}
+    const seconds=fadePlan(engine.current?.audio,engine.preview[0]?.audio);
+    if(seconds===null || seconds===fadeSeconds)return;
+    fadeBusy=true;
+    try{await transitions.apply(seconds);fadeSeconds=seconds;}
+    catch(e){fadeSeconds=seconds;if(!fadeWarned){fadeWarned=true;engine.notify('Transición automática no disponible: '+e.message,true);}}
+    finally{fadeBusy=false;}
+  }
+  engine.onUpdate=()=>{if(engine.active && !reconcile)reconcile=setInterval(reconcileQueue,1000);if(!engine.active && reconcile){clearInterval(reconcile);reconcile=null;}autoFade();view.update();};
   observe();
   const unload=()=>voiceGate.cancel();root.addEventListener('beforeunload',unload);
-  root.PoorDJ={engine,open:view.open,version:VERSION,audio,narrator,voiceGate,transitions,command:text=>engine.command(text),dispose:()=>{stopped=true;engine.commandGeneration++;engine.active=false;engine.generation++;engine.cancelLookup?.();clearInterval(reconcile);playGuards.forEach(undo=>undo());voiceGate.cancel();narrator.dispose();audio.dispose();requests.dispose();library.dispose();for(const [event,fn]of [['songchange',observe],['onprogress',sample],['onplaypause',paused]])S.Player.removeEventListener?.(event,fn);root.removeEventListener('beforeunload',unload);view.dispose();}};
+  const diagnose=async()=>{
+    const api={queue:Array.isArray(S.Queue?.nextTracks) && typeof S.addToQueue==='function',play:typeof (S.Platform.PlayerAPI?.play||S.Player.origin?.play)==='function',audio:typeof S.getAudioData==='function',playlists:!!(S.Platform.RootlistAPI?.createPlaylist && S.Platform.PlaylistAPI?.add),voice:!!narrator.voice,lyrics:typeof S.CosmosAsync?.get==='function',spicy:!!root.SpicyLyrics};
+    const [a,b]=await Promise.allSettled([query('searchTracks',{searchTerm:'a',offset:0,limit:1,numberOfTopResults:1,includeAudiobooks:false,includePreReleases:false,includeAlbumPreReleases:false}),query('searchArtists',{searchTerm:'a',offset:0,limit:1,numberOfTopResults:1,includeAudiobooks:false})]);
+    return compatReport({api,probes:{search:a.status==='fulfilled',artists:b.status==='fulfilled'}});
+  };
+  root.PoorDJ={engine,diagnose,open:view.open,version:VERSION,audio,narrator,voiceGate,transitions,command:text=>engine.command(text),dispose:()=>{stopped=true;engine.commandGeneration++;engine.active=false;engine.generation++;engine.cancelLookup?.();clearInterval(reconcile);playGuards.forEach(undo=>undo());voiceGate.cancel();narrator.dispose();audio.dispose();requests.dispose();library.dispose();for(const [event,fn]of [['songchange',observe],['onprogress',sample],['onplaypause',paused]])S.Player.removeEventListener?.(event,fn);root.removeEventListener('beforeunload',unload);view.dispose();}};
   root.PoorMansDJ=root.PoorDJ;
 }
 boot();

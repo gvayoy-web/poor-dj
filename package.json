@@ -1,6 +1,6 @@
 {
   "name": "poor-dj",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "Local session-aware DJ for Spicetify",
   "license": "MIT",
@@ -14,5 +14,6 @@
   },
   "engines": {
     "node": ">=24"
-  }
+  },
+  "author": "KROMBYTE"
 }

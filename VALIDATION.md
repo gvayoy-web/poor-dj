@@ -17,3 +17,8 @@ La sesión continua de 60 minutos no se completó: el usuario pidió detener esa
 Ejecutar los comandos del README y `node test/ui.smoke.cjs` con Playwright y Edge disponibles. La fixture usa datos ilustrativos y simula el cierre de modal por clic fuera del panel.
 
 `node test/live-panel.cjs` es una comprobación opcional de desarrollo con Spotify abierto temporalmente en el puerto 9222 de localhost. Solo busca y abre el menú; no inicia la mezcla. Cerrar después la depuración y reiniciar Spotify normalmente. Nunca publicar perfiles, cookies, tokens ni capturas con información de la cuenta.
+
+## 3.4.0 (letras y diseño)
+
+- Comprobado: análisis de LRC y de la respuesta de Spotify, búsqueda de línea activa, caché, respaldo opcional (pruebas unitarias) y la interfaz en Chromium con un cliente simulado.
+- **No comprobado** contra un Spotify real: el endpoint interno de letras de Spotify (`color-lyrics`) y `colorExtractor` dependen de la versión del cliente; si fallan, la pestaña muestra que no hay letra y el DJ no se ve afectado. Verifícalo en tu equipo antes de publicar.

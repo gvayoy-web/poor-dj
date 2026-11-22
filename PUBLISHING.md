@@ -20,13 +20,13 @@ La URL es un marcador: sustituir por la que muestre GitHub. No subir perfiles, c
 Ejecutar las pruebas del README y revisar `VALIDATION.md`. El workflow `release.yml` valida que el tag coincida con `package.json`, comprueba el código y crea un **borrador de release** con ZIP, SHA-256 y notas:
 
 ```sh
-git tag v3.3.0
-git push origin v3.3.0
+git tag v3.4.0
+git push origin v3.4.0
 ```
 
 En GitHub, abrir **Releases**, revisar el borrador y pulsar **Publish release**. GitHub Actions debe estar habilitado. La automatización se ha preparado localmente; su primera ejecución remota queda pendiente de subir el repositorio y el tag.
 
-Alternativa manual: ejecutar `node build.cjs` y `node release.cjs`; crear una release `v3.3.0` desde GitHub y adjuntar los archivos `dist/poor-dj-3.3.0.zip` y `.zip.sha256`. Utilizar las notas de `RELEASE_NOTES.md`.
+Alternativa manual: ejecutar `node build.cjs` y `node release.cjs`; crear una release `v3.4.0` desde GitHub y adjuntar los archivos `dist/poor-dj-3.4.0.zip` y `.zip.sha256`. Utilizar las notas de `RELEASE_NOTES.md`.
 
 ## Aparecer en Spicetify Marketplace
 

@@ -1,4 +1,4 @@
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 const clamp = (n, a = 0, b = 100) => Math.min(b, Math.max(a, Number(n) || 0));
 const valid = uri => /^spotify:track:[A-Za-z0-9]{22}$/.test(uri || '');
 const unwrap = x => x?.contextTrack || x?.track?.data || x?.track || x?.item?.data || x?.item || x;
@@ -27,13 +27,17 @@ function collect(data, source) {
   }
   walk(data,0); return [...found.values()];
 }
-const DEFAULTS={discovery:0,diversity:25,takeover:false,queueSize:1,accent:'spotify',compact:false,mini:true,explicit:true,autoLearn:true,continuity:65,flowStrength:65,voice:true};
+const DEFAULTS={discovery:0,diversity:25,takeover:false,queueSize:1,accent:'spotify',compact:false,mini:true,explicit:true,autoLearn:true,continuity:65,flowStrength:65,voice:true,lyrics:true,lyricsExternal:false,lyricsSize:'m',lyricsOffset:0,ambient:true,talk:'few',voiceName:'',autoFade:false};
 function settingsOf(value={}){
   const s=Object.fromEntries(Object.entries(DEFAULTS).map(([key,def])=>[key,value[key]??def]));
   if(!['spotify','theme','blue','violet','rose'].includes(s.accent))s.accent='spotify';
   for(const key of ['discovery','diversity','continuity','flowStrength'])s[key]=clamp(s[key]);
   s.queueSize=Math.round(clamp(s.queueSize,1,3));
-  for(const key of ['takeover','compact','mini','explicit','autoLearn','voice'])if(typeof s[key]!=='boolean')s[key]=DEFAULTS[key];
+  if(!['s','m','l'].includes(s.lyricsSize))s.lyricsSize='m';
+  if(!['start','few','often'].includes(s.talk))s.talk='few';
+  s.voiceName=typeof s.voiceName==='string'?s.voiceName.slice(0,120):'';
+  s.lyricsOffset=Math.round(clamp(s.lyricsOffset,-3000,3000)/50)*50;
+  for(const key of ['takeover','compact','mini','explicit','autoLearn','voice','lyrics','lyricsExternal','ambient','autoFade'])if(typeof s[key]!=='boolean')s[key]=DEFAULTS[key];
   return s;
 }
 const reference = t => ({uri:t.uri,uid:t.uid});
@@ -110,6 +114,18 @@ class Engine {
       this.captured=false;this.sessionExcluded.clear();this.artistExcluded.clear();this.save();
     }catch(e){this.notify(`No pude restaurar toda la cola: ${e.message}`,true);this.save();}
     finally{this.busy=false;this.onUpdate();}
+  }
+  async saveSession(){
+    const tracks=[...new Map(this.sessionList.filter(t=>valid(t.uri)).map(t=>[t.uri,t])).values()];
+    if(tracks.length<2){this.notify('Aún hay pocas canciones para guardar la sesión.',true);return;}
+    if(!this.io.createMix){this.notify('Este cliente no permite guardar playlists.',true);return;}
+    this.sessionStamp||=Date.now();
+    try{this.notify('Guardando la sesión como playlist privada…');
+      const label=new Date(this.sessionStamp).toLocaleDateString('es',{day:'numeric',month:'short'})+' '+new Date(this.sessionStamp).toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
+      const saved=await this.io.createMix({uri:'session:'+this.sessionStamp,name:'Sesión '+label},'session',tracks);
+      this.mixPlaylist=saved;this.sessionStamp=null;this.save();this.notify('Sesión guardada: '+saved.name);
+    }catch(e){this.notify(e.message||'No pude guardar la sesión.',true);}
+    finally{this.onUpdate();}
   }
   updateSettings(patch,rebuild=true){
     const old=this.settings;this.settings=settingsOf({...old,...patch});
@@ -197,7 +213,7 @@ class Engine {
       const m=this.memory[track.uri] ||= {plays:0,vote:0,heard:0};
       m.track={uri:track.uri,name:track.name,artists:track.artists,image:track.image||'',duration:track.duration||0,explicit:!!track.explicit};
       track.artists.forEach(a=>this.artistSet.add(artistKey(a)));this.sessionList.push({...track});this.sessionList=this.sessionList.slice(-100);
-      if(this.played%4===0)this.onNarrate('block');
+      const every={few:5,often:3}[this.settings.talk];if(every && this.played%every===0)this.onNarrate('next');
       this.managed=this.managed.filter(t=>t.uri!==track.uri);this.preview=this.preview.filter(t=>t.uri!==track.uri);this.save();
       this.generation++;this.lastAttempt=0;this.fill();
     }
@@ -213,6 +229,9 @@ class Engine {
     recent.slice(-4).forEach(r=>{if(r.artists.some(a=>keys.has(artistKey(a))))score-=this.settings.diversity*.025;});
     const from=recent.at(-1)||this.current,comp=transitionFit(from?.audio,t.audio);
     if(comp.value!==null)score+=(comp.value-.5)*this.settings.flowStrength*.6*comp.coverage;
+    // Forma de set: se evitan saltos bruscos de ritmo (más allá de mitad/doble) y de nivel.
+    if(comp.tempo!==null && comp.tempo>.25)score-=10*this.settings.flowStrength/65;
+    if(comp.loudness!==null && comp.loudness>8)score-=6*this.settings.flowStrength/65;
     return score;
   }
   reason(t,from){

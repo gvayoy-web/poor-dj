@@ -2,7 +2,7 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const root=__dirname,pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8').replace(/^\uFEFF/,''));
 const main=fs.readFileSync(path.join(root,'poor-mans-dj.js'));
 if(!main.toString().startsWith(`/* POOR DJ ${pkg.version} | MIT */`))throw Error('Build and package versions differ');
-if(main.length>150000)throw Error('Extension exceeds 150 KB');
+if(main.length>200000)throw Error('Extension exceeds 200 KB');
 const manifest=JSON.parse(fs.readFileSync(path.join(root,'manifest.json'),'utf8'));
 for(const key of ['name','description','preview','main','readme'])if(!manifest[key])throw Error('Missing manifest '+key);
 const files=['poor-mans-dj.js','manifest.json','README.md','preview.png','LICENSE','CHANGELOG.md','PUBLISHING.md','VALIDATION.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','RELEASE_NOTES.md','assets/mark.svg','assets/artist-modes.png'];

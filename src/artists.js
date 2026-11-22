@@ -7,7 +7,7 @@ function collectArtists(data){
   };walk(data);return [...found.values()].slice(0,6);
 }
 const hasArtist=(track,artist)=>!!artist && track?.artists?.some(a=>a.uri && artist.uri?a.uri===artist.uri:words(a.name)===words(artist.name));
-const mixUris=(pending,key,tracks)=>[...new Set((pending?.key===key && Array.isArray(pending.tracks)?pending.tracks:tracks.map(t=>t.uri)).filter(valid))].slice(0,24);
+const mixUris=(pending,key,tracks,limit=24)=>[...new Set((pending?.key===key && Array.isArray(pending.tracks)?pending.tracks:tracks.map(t=>t.uri)).filter(valid))].slice(0,limit);
 function artistChoice(ranked,recent,intent){
   if(!intent.artist || intent.artistMode!=='mix')return null;
   let streak=0;for(let i=recent.length-1;i>=0 && hasArtist(recent[i],intent.artist);i--)streak++;

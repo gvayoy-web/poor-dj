@@ -1,5 +1,25 @@
 # Cambios
 
+## 3.4.0
+
+- Pestaña **Letras**: letras sincronizadas por línea desde Spotify, línea activa con desenfoque de las demás, salto al tocar una línea, seguimiento automático que se pausa al desplazarte, ajuste de desfase, tres tamaños y pantalla completa.
+- Respaldo opcional con LRCLIB, apagado por defecto y explicado en Ajustes; el texto de las letras no se guarda.
+- Diseño renovado: pestañas, tinte con el color de la portada, portada mayor, transporte (anterior / pausa / siguiente) y barra de progreso con salto.
+- **Letras en el escritorio:** ruta propia `/PoorDJ` con portada, letra grande y los mismos controles; botón «Letras · POOR DJ» en la barra de reproducción y acceso desde el panel. Funciona sin abrir el panel del DJ.
+- Si Spicy Lyrics está instalado, se ofrece un botón para abrirlo (`/SpicyLyrics`); no se comparte código ni su servicio: son extensiones independientes que conviven.
+- **Ajustes simplificados:** a la vista solo voz, frecuencia del DJ, canciones pendientes, color y cuatro casillas; transiciones, temporizador, etiquetas, biblioteca y datos pasan a *Avanzado*. Se retiran el panel compacto, el selector de ambiente y la sección «Cómo funciona».
+- **Voz:** selector de voz con ranking y prueba; el DJ aparece como pista («DJ POOR») mientras habla y presenta cada 3 o 5 canciones la que suena, con su procedencia.
+- **Complemento con Spicy Lyrics:** si está instalado, PurDJ oculta sus letras y ofrece abrirlo; el subtítulo del DJ se ve aunque el panel esté cerrado.
+- **Voz simplificada:** un solo selector (Automática / Sin voz / voces del cliente) que prueba la voz al elegirla; se elimina el botón de prueba.
+- **Comprobar compatibilidad** en Avanzado; **guardar la sesión como playlist privada** (sustituye al JSON de sesión); comentarios con datos reales de tu historial local.
+- **Interfaz más simple:** una tarjeta de inicio (origen de la música, botón principal y «Seguir esta canción»), después la sesión y la búsqueda. El botón principal pasa a «Terminar DJ» sin competir con otras acciones. Crédito «Hecho por KROMBYTE».
+- **Comentarios inteligentes:** ánimo por tempo y tono medidos, aviso de cambio de ambiente, frases por estilo declarado, hora de la noche y saludo «Soy DJ POOR»; nunca inventa género ni ánimo sin datos.
+- **Transiciones:** forma de set (penaliza saltos bruscos de ritmo y de nivel), etiquetas en lenguaje claro y **transición automática** opcional que ajusta el solapamiento de Spotify (0 a 6 s) por pareja de canciones y lo restaura al terminar.
+- **Robustez:** el DJ ya no se reinicia la voz elegida al cambiar las voces del sistema; las letras tienen tiempo máximo de espera de 7 s; el bucle de progreso no se detiene por un error puntual; el control flotante se oculta con el panel abierto; los subtítulos del DJ también se ven si la voz está silenciada.
+- **Compatibilidad:** salto en la reproducción con alternativas si el cliente no ofrece `Player.seek`, y aviso claro tras 60 s si Spicetify no ofrece las piezas necesarias.
+- Temporizador para terminar la sesión del DJ.
+- Nuevas pruebas de letras (110 unitarias) y flujo de interfaz de letras; el límite del paquete sube a 200 KB.
+
 ## 3.3.0
 
 - Menú de artista estable: conserva el panel, los resultados y el foco del teclado.
