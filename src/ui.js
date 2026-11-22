@@ -4,7 +4,34 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
   mini.innerHTML=`<button data-open>${ICON}<span>POOR DJ</span></button><button data-stop aria-label="Terminar DJ">■</button>`;document.body.append(mini);
   const perform=async work=>{try{await work();}catch(e){engine.notify(e.message,true);}finally{update();}};
   mini.querySelector('[data-open]').onclick=()=>open();mini.querySelector('[data-stop]').onclick=()=>perform(()=>engine.stop());
-  const playbar=new S.Playbar.Button('POOR DJ',ICON,()=>open());
+  let playerButton=null,playerButtonParent=null,playerButtonFrame=0;
+  const ensurePlayerButton=()=>{
+    const bar=document.querySelector('[data-testid="now-playing-bar"]');
+    const anchor=bar?.querySelector('#SpicyLyrics_PageButton')||bar?.querySelector('[data-testid="control-button-queue"]');
+    const parent=anchor?.parentElement;
+    if(!parent)return;
+    if(playerButton?.isConnected && playerButtonParent===parent)return;
+    playerButton?.remove();
+    playerButton=document.createElement('button');playerButton.type='button';
+    const styleRef=bar.querySelector('[data-testid="control-button-queue"]')||anchor;
+    playerButton.className=styleRef.className;
+    playerButton.id='PoorDJ_PlaybarButton';playerButton.setAttribute('aria-label','Abrir POOR DJ · Ctrl+D');playerButton.title='POOR DJ · Ctrl+D';
+    playerButton.innerHTML=ICON;playerButton.onclick=()=>open();
+    parent.insertBefore(playerButton,anchor);playerButtonParent=parent;
+  };
+  const playerButtonObserver=new MutationObserver(()=>{
+    if(playerButtonFrame)return;
+    playerButtonFrame=requestAnimationFrame(()=>{playerButtonFrame=0;ensurePlayerButton();});
+  });
+  playerButtonObserver.observe(document.body,{childList:true,subtree:true});
+  const shortcut=e=>{
+    if(e.code!=='KeyD'||!e.ctrlKey||e.altKey||e.shiftKey||e.metaKey||e.repeat)return;
+    const target=e.target;
+    if(target?.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(target?.tagName||'')||target?.closest?.('[contenteditable="true"],[role="textbox"]'))return;
+    e.preventDefault();e.stopPropagation();open();
+  };
+  document.addEventListener('keydown',shortcut,true);
+  ensurePlayerButton();
   const theme=node=>{node.dataset.accent=engine.settings.accent;node.classList.toggle('pd-compact',engine.settings.compact);};
   const text=(key,value)=>{const n=panel?.querySelector(`[data-${key}]`);if(n && n.textContent!==String(value))n.textContent=value;};
   const download=(data,name)=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
@@ -128,7 +155,7 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
     return tracks.map(t=>`<button class="pd-choice" data-${kind}="${esc(t.uri)}" ${engine.choiceBusy?'disabled':''}><span class="pd-choicecover">${imageURL(t.image)?`<img src="${esc(imageURL(t.image))}" alt="" loading="eager">`:ICON}<span class="pd-choiceplay">▶</span></span><b>${esc(t.name)}</b><small>${esc(t.artists.map(a=>a.name).join(', '))}</small><small class="pd-evidence">${esc(evidenceLabel(t.evidence||knownEvidence(t,engine.memory[t.uri]))||t.album||'Resultado de Spotify')}</small></button>`).join('');
   }
   function update(){
-    playbar.active=engine.active;ensureButton();updatePage();tint();
+    ensurePlayerButton();ensureButton();updatePage();tint();
     const recent=narrator.text && Date.now()-(narrator.textAt||0)<7000,say=(narrator.speaking || recent) && !!narrator.text && !panel?.isConnected;toast.hidden=!say;if(say && !narrator.speaking){clearTimeout(L.toastTimer);L.toastTimer=setTimeout(()=>update(),7100);}if(say){toast.dataset.accent=engine.settings.accent;toast.innerHTML=`<b>DJ POOR</b> ${esc(narrator.text)}`;}theme(mini);mini.hidden=!engine.settings.mini || !engine.active || !!panel?.isConnected;
     if(!panel?.isConnected)return;theme(panel);panel.dataset.lyrics=String(engine.settings.lyrics);panel.dataset.lsize=engine.settings.lyricsSize;panel.dataset.playing=String(engine.active && S.Player.isPlaying());
     text('live',narrator.speaking?'DJ hablando':engine.choiceBusy?'Reproduciendo':engine.active?(engine.busy?'Eligiendo':'DJ activo'):'Tú tienes el control');
@@ -286,5 +313,5 @@ function mountUI(S,engine,{audio,queue,narrator,voiceGate,library,transitions,re
     panel.querySelector('[data-file]').onchange=event=>perform(async()=>{const file=event.target.files[0];if(!file)return;if(file.size>2000000)throw Error('El perfil supera 2 MB');await engine.importProfile(JSON.parse(await file.text()));narrator.enabled=engine.settings.voice;narrator.prefer(engine.settings.voiceName);event.target.value='';});
     S.PopupModal.display({title:'POOR DJ',content:panel,isLarge:true});L.tab='dj';L.uri='';update();startFrame();transitions.refresh().then(update).catch(()=>{});panel.querySelector('#pd-command').focus();
   }
-  return {open,update,openLyrics:()=>{if(!onRoute())S.Platform.History.push(ROUTE);},dispose:()=>{clearTimeout(buttonTimer);clearTimeout(L.toastTimer);toast.remove();closePage();unlisten?.();lyricsButton?.deregister?.();cancelAnimationFrame(L.raf);L.raf=0;if(panel?.isConnected)S.PopupModal.hide();panel?.remove();mini.remove();style.remove();playbar.deregister?.();}};
+  return {open,update,openLyrics:()=>{if(!onRoute())S.Platform.History.push(ROUTE);},dispose:()=>{clearTimeout(buttonTimer);clearTimeout(L.toastTimer);toast.remove();closePage();unlisten?.();lyricsButton?.deregister?.();playerButtonObserver.disconnect();document.removeEventListener('keydown',shortcut,true);cancelAnimationFrame(playerButtonFrame);playerButton?.remove();cancelAnimationFrame(L.raf);L.raf=0;if(panel?.isConnected)S.PopupModal.hide();panel?.remove();mini.remove();style.remove();}};
 }

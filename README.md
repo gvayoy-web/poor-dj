@@ -71,7 +71,7 @@ La pestaña **Letras** usa primero las letras que el cliente de Spotify ofrece a
 
 La búsqueda en **LRCLIB** está **apagada por defecto** (Ajustes → Letras y ambiente). Si la activas, cuando Spotify no tiene letra se envían título, artista, álbum y duración a lrclib.net. El texto de las letras no se guarda; solo se recuerdan, 24 h, las canciones sin letra.
 
-**En el escritorio:** el botón *Letras · POOR DJ* de la barra de reproducción (o «Abrir letras en la ventana» en el panel) abre la ruta `/PoorDJ`, con la letra grande; vuelve con *Cerrar letras*.
+**En el escritorio:** el botón **POOR DJ** de la barra de reproducción abre el panel; también puedes usar **Ctrl+D**. El botón *Letras · POOR DJ* (o «Abrir letras en la ventana» en el panel) abre la ruta `/PoorDJ`, con la letra grande; vuelve con *Cerrar letras*.
 
 **Con Spicy Lyrics:** si está instalado, POOR DJ **cede las letras**: oculta su pestaña, su página y sus ajustes de letras, y el panel muestra un botón *Letras ↗* que abre Spicy Lyrics. Así cada extensión hace lo suyo: Spicy Lyrics las letras (palabra por palabra, fondos, romanización) y POOR DJ la sesión y la voz. Cuando el DJ habla con el panel cerrado, aparece su subtítulo sobre cualquier vista, incluida la de Spicy Lyrics. POOR DJ es MIT y Spicy Lyrics AGPL-3.0, por eso no comparten código ni su servicio.
 
@@ -116,7 +116,7 @@ spicetify config extensions poor-mans-dj.js
 spicetify apply
 ```
 
-Abre POOR DJ desde el reproductor. Busca un título o artista, elige una tarjeta, o pulsa **Seguir esta canción**. Ejemplos: `solo conocidas y más variedad`, `sigue esta canción`, `termina el DJ`. Las instrucciones incompletas se explican antes de aplicar cambios.
+Abre POOR DJ desde el botón **POOR DJ** en la barra del reproductor o con **Ctrl+D**. Busca un título o artista, elige una tarjeta, o pulsa **Seguir esta canción**. Ejemplos: `solo conocidas y más variedad`, `sigue esta canción`, `termina el DJ`. Las instrucciones incompletas se explican antes de aplicar cambios.
 
 ## Desarrollar
 
