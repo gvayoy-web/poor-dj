@@ -15,6 +15,7 @@ test('old favorite votes cannot admit artists outside the seed sources',()=>{
 });
 test('familiar mode selects only context/history even when viral artist tracks are available',()=>{
  const f=fixture(),pool=affinityPool(track(1),[],[{tracks:[{...track(2),playlist:true}],source:'contexto',familiar:true},{tracks:[track(3)],source:'artista actual'}]);
+ f.e.intent.known=true;f.e.settings.discovery=0;
  assert.deepEqual(f.e.select(pool,[],3).map(t=>t.uri),[track(2).uri]);
  f.e.intent.known=false;f.e.settings.discovery=50;assert.equal(f.e.select(pool,[],3).length,2);
 });
@@ -30,7 +31,7 @@ test('recent suggestions cannot return after refresh or a restart',async()=>{
  assert.equal(restart.select([{...first,affinity:true,familiar:true,playlist:true}],[],1).length,0);
 });
 test('empty compatible pool never fills the queue with unrelated music',async()=>{
- const f=fixture();f.io.candidates=async()=>[{...track(3,dillom),familiar:true}];await f.e.start();assert.equal(f.q().length,0);assert.match(f.e.status,/No encontré/);
+ const f=fixture();f.io.candidates=async()=>[{...track(3,dillom),familiar:true}];await f.e.start();assert.equal(f.q().length,0);assert.match(f.e.status,/Me quedé sin canciones afines/);
 });
 test('changing the anchor with no matches removes stale DJ suggestions',async()=>{
  const f=fixture();await f.e.start();f.io.candidates=async()=>[];await f.e.fill(true);assert.equal(f.q().length,0);assert.equal(f.e.managed.length,0);
@@ -46,7 +47,7 @@ test('a manual playback request invalidates a pending lookup before insertion',a
  const choice=api.play(track(90,isma));resolve([{...track(2),affinity:true,familiar:true}]);await Promise.all([start,choice]);assert.equal(played,true);assert.equal(f.q().length,0);
 });
 test('manual queue edits during lookup prevent insertion and preserve the new choice',async()=>{
- const f=fixture();let resolve;f.io.candidates=()=>new Promise(r=>resolve=r);const start=f.e.start();f.set([track(90,isma)]);resolve([{...track(2),affinity:true,familiar:true}]);await start;assert.deepEqual(f.q().map(t=>t.uri),[track(90,isma).uri]);assert.equal(f.e.active,false);
+ const f=fixture();let resolve;f.io.candidates=()=>new Promise(r=>resolve=r);const start=f.e.start();f.set([track(90,isma)]);resolve([{...track(2),affinity:true,familiar:true}]);await start;assert.deepEqual(f.q().map(t=>t.uri),[track(90,isma).uri]);assert.equal(f.e.active,true);
 });
 test('manual play does not wait for an unresponsive recommendation lookup',async()=>{
  const f=fixture();f.io.candidates=()=>new Promise(()=>{});const start=f.e.start();let played=false;
@@ -66,5 +67,5 @@ test('play guard is transparent while DJ is inactive and preserves another wrapp
  const api={play:()=>7};const undo=guardPlay(api,()=>null);assert.equal(api.play(),7);const replacement=()=>8;api.play=replacement;undo();assert.equal(api.play,replacement);
 });
 test('unsafe experimental fades cannot be selected from saved settings',()=>{
- for(const transition of ['auto','fixed'])assert.equal(settingsOf({transition}).transition,undefined);assert.equal(settingsOf().queueSize,1);assert.equal(settingsOf().takeover,false);
+ for(const transition of ['auto','fixed'])assert.equal(settingsOf({transition}).transition,undefined);assert.equal(settingsOf().queueSize,3);assert.equal(settingsOf().discovery,35);assert.equal(settingsOf().takeover,false);
 });

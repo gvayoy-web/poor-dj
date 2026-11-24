@@ -88,8 +88,8 @@ test('ánimo: solo con tempo y tono medidos, sin inventar',()=>{
 });
 test('comentarios inteligentes: ánimo, cambio de ambiente y género declarado',()=>{
   const base={name:'Yoko (feat. X)',artists:[{name:'Omar'}]};
-  const sad=Array.from({length:6},(_,i)=>commentary('next',{...base,audio:{bpm:78,mode:0,key:1}},intentOf(),i));
-  assert.ok(sad.every(x=>/Yoko,/.test(x) && !/feat/.test(x)));assert.ok(sad.some(x=>/melanc|sentimental|luz/i.test(x)));assert.ok(sad.some(x=>/78 bpm.*menor/.test(x)));
+  const sad=Array.from({length:8},(_,i)=>commentary('next',{...base,audio:{bpm:78,mode:0,key:1}},intentOf(),i));
+  assert.ok(sad.every(x=>/Yoko,/.test(x) && !/feat/.test(x) && !/bpm/i.test(x)));assert.ok(sad.some(x=>/melanc|sentimental|luz/i.test(x)));
   const shift=commentary('next',{...base,audio:{bpm:78,mode:0},prevAudio:{bpm:128,mode:1}},intentOf(),0);assert.match(shift,/Cambiamos de ambiente: ahora algo más melancólico/);
   const g=Array.from({length:8},(_,i)=>commentary('next',{...base,styles:['reggaeton']},intentOf(),i));assert.ok(g.some(x=>/perreo|flow/i.test(x)));
   const none=Array.from({length:8},(_,i)=>commentary('next',base,intentOf(),i));

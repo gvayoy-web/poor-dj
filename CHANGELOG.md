@@ -1,5 +1,27 @@
 # Cambios
 
+## 4.0.0
+
+### Correcciones críticas de estabilidad y selección
+- **Saltos sin desactivar el DJ:** `trackChanged` ya no desactiva el DJ cuando saltas canciones o Spotify avanza por el contexto antes de que llegue una sugerencia; además mantiene un búfer predeterminado de 3 canciones (configurable de 2 a 5) y elimina la pausa de 15 s tras cada cambio cuando no hay fallos.
+- **Reencolado continuo sin carreras:** si ocurre un salto mientras se está rellenando la cola (`refill` en vuelo), se programa automáticamente otro rellenado al terminar; también se elimina la desactivación en `refill` y al cambiar de dispositivo de reproducción (ahora solo cancela la locución activa).
+- **Cero repeticiones:** registro de URIs reproducidas en la sesión (`sessionPlayed`) y nueva normalización `songIdentity()` para bloquear versiones duplicadas del mismo tema (`Remastered`, `Live`, `En vivo`, `feat.`, `Edit`, `Mono`, `Stereo`, conservando `Remix`), más bloqueo de 2 horas para `lastPlayed` reciente y penalizaciones por recencia entre sesiones.
+- **Prioridad real para tu cola manual:** si agregas canciones manualmente, el DJ retira sus propuestas para que suenen primero, espera sin añadir más hasta que tu cola termine y mantiene la sesión activa.
+- **Filtro de repeticiones en contexto:** si Spotify cae en una canción ya escuchada en la sesión o no elegible, el DJ la salta automáticamente (máximo 3 saltos seguidos).
+
+### Mejor gusto musical y modo seguir
+- **Radio de Spotify + aprendizaje por artista:** integra `inspiredby-mix` (con respaldo `radio-apollo`), semillas dinámicas (`seeds` con canciones escuchadas ≥70% o marcadas con «Me encanta»), puntuación por gusto acumulado del artista (esquema de perfil 4), familiaridad en biblioteca y equilibrio de descubrimiento en modo *Mezcla*.
+- **Modo «Seguir esa dirección» (`onManual: 'follow'`):** al reproducir manualmente otra canción, el DJ toma esa elección como nueva referencia y recompone la cola sin apagarse (configurable para volver a pausar si lo prefieres).
+
+### Voz neuronal local y locución
+- **Servidor local `voice/` (127.0.0.1:47811):** integración con Piper TTS (`es_MX-claude-high` por defecto, `es_MX-ald-medium`, `es_AR-daniela-high`, `es_ES-davefx-medium`) y soporte opcional Kokoro ONNX (`em_alex`, `em_santa`, `ef_dora`), caché LRU y script de instalación con inicio automático en Windows (`voice\install.ps1 -Autostart`).
+- **Atenuación inteligente (*ducking*):** baja suavemente el volumen de Spotify tras verificar audio listo y lo restaura al terminar (con recuperación segura al reiniciar y respeto si mueves el volumen manualmente).
+- **Locutor renovado:** comentarios cálidos en español mexicano (≤30 palabras, sin recitar cifras de BPM, 8+ aperturas por evento, limpieza `speakable()` para TTS y eventos `follow`, `discovery`, `return`, `milestone` y `end`).
+
+### Cabina rediseñada a pantalla completa (`/PoorDJ`)
+- **Nueva interfaz glass oscura:** vista completa en `#main-view` con fondo difuminado de portada, vinilo giratorio, pestañas **Sesión · Letras · Ajustes**, tarjetas de modo (*Mis favoritas*, *Mezcla*, *Descubrir*), estadísticas en vivo, iconos SVG y botón/atajo `Ctrl+D` integrados en la barra de reproducción.
+- **Elección de proveedor de letras:** detecta *Spicy Lyrics*, *Lyrics Plus* y *Beautiful Lyrics*; en **Ajustes → Apariencia y letras** puedes elegir entre usar la extensión externa por defecto o conservar la pestaña *Letras* integrada de POOR DJ (con enlace rápido a la extensión externa).
+
 ## 3.4.0
 
 - Pestaña **Letras**: letras sincronizadas por línea desde Spotify, línea activa con desenfoque de las demás, salto al tocar una línea, seguimiento automático que se pausa al desplazarte, ajuste de desfase, tres tamaños y pantalla completa.

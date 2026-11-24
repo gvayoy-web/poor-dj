@@ -1,9 +1,9 @@
 {
   "name": "poor-dj",
-  "version": "3.4.0",
+  "version": "4.0.0",
   "private": true,
   "description": "Local session-aware DJ for Spicetify",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "scripts": {
     "build": "node build.cjs",
     "check": "node --check poor-mans-dj.js",

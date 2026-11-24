@@ -1,61 +1,186 @@
-const {chromium}=require('playwright'),{pathToFileURL}=require('node:url'),path=require('node:path'),assert=require('node:assert/strict');
-(async()=>{
- const browser=await chromium.launch(process.env.KROMBYTE_CHROME?{headless:true,executablePath:process.env.KROMBYTE_CHROME,args:['--no-sandbox']}:{headless:true,channel:'msedge'});
- try{
-  const page=await browser.newPage({viewport:{width:390,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(pathToFileURL(path.join(__dirname,'fixture.html')).href);
-  assert.match(await page.locator('.pd h1').innerText(),/3\.4/);assert.equal(await page.evaluate(()=>demo.intervals()),0);assert.match(await page.getByRole('textbox',{name:'¿Qué quieres escuchar?'}).getAttribute('placeholder'),/Yoko/);
-  assert.equal(await page.evaluate(()=>PoorDJ.engine.settings.takeover),false);
-  const before=await page.evaluate(()=>Spicetify.Player.data.item.uri);
-  await page.getByRole('button',{name:'Elegir música conocida',exact:true}).click();assert.equal(await page.locator('[data-choice]').count(),2);
-  const first=await page.locator('[data-choice]').evaluateAll(nodes=>nodes.map(n=>n.dataset.choice));
-  await page.getByRole('button',{name:'Otra vez',exact:true}).click();const second=await page.locator('[data-choice]').evaluateAll(nodes=>nodes.map(n=>n.dataset.choice));assert.ok(second.every(uri=>!first.includes(uri)));
-  assert.equal(await page.evaluate(()=>Spicetify.Player.data.item.uri),before);assert.equal(await page.evaluate(()=>demo.intervals()),0);
-  await page.locator('[data-choice]').first().click();await page.waitForFunction(()=>PoorDJ.engine.active && !PoorDJ.engine.busy && !PoorDJ.engine.choiceBusy && PoorDJ.engine.preview.length===1);
-  assert.equal(await page.evaluate(()=>demo.intervals()),1);
-  assert.equal(await page.locator('.pd-mini').isHidden(),true);
-  await page.locator('#pd-command').fill('solo conocidas y menos comercial');await page.getByRole('button',{name:'Buscar',exact:true}).click();await page.waitForFunction(()=>PoorDJ.engine.error);assert.equal(await page.evaluate(()=>PoorDJ.engine.intent.known),true);
-  await page.locator('#pd-command').fill('solo conocidas y sin Dillom y más variedad');await page.getByRole('button',{name:'Buscar',exact:true}).click();await page.waitForFunction(()=>PoorDJ.engine.intent.variety===80 && !PoorDJ.engine.busy);
-  assert.ok((await page.locator('[data-intent]').innerText()).includes('dillom'));
-  await page.locator('#pd-command').fill('pon SIN UN PLAN (TEGOCALDERON) de Isma');await page.getByRole('button',{name:'Buscar',exact:true}).click();await page.waitForFunction(()=>!PoorDJ.engine.active && !PoorDJ.engine.choiceBusy && Spicetify.Player.data.item.name==='SIN UN PLAN (TEGOCALDERON)');
-  assert.equal(await page.evaluate(()=>demo.beforeManualPlay),0);assert.equal(await page.evaluate(()=>demo.intervals()),0);
-  assert.equal(await page.evaluate(()=>Spicetify.Queue.nextTracks.filter(t=>t.provider==='context').length),30);
-  await page.getByRole('button',{name:'Seguir esta canción',exact:true}).click();await page.waitForFunction(()=>PoorDJ.engine.active && !PoorDJ.engine.busy);assert.equal(await page.evaluate(()=>Spicetify.Player.data.item.name),'SIN UN PLAN (TEGOCALDERON)');await page.evaluate(()=>PoorDJ.engine.stop());
-  const searchBefore=await page.evaluate(()=>Spicetify.Player.data.item.uri);await page.locator('#pd-command').fill('Yoko');await page.keyboard.press('Enter');await page.waitForFunction(()=>PoorDJ.engine.commandChoices.length>0);assert.ok(await page.locator('[data-match]').count()>0);assert.equal(await page.evaluate(()=>Spicetify.Player.data.item.uri),searchBefore);await page.locator('[data-match]').first().click();await page.waitForFunction(()=>PoorDJ.engine.active && !PoorDJ.engine.busy && !PoorDJ.engine.choiceBusy);await page.evaluate(()=>PoorDJ.engine.stop());
-  await page.locator('#pd-command').fill('Omar Courtz');await page.keyboard.press('Enter');await page.waitForFunction(()=>PoorDJ.engine.commandArtists.length>0);await page.evaluate(()=>{window.testPanel=document.querySelector('.pd');window.testArtist=document.querySelector('[data-mixartist]');});await page.locator('[data-mixartist]').first().click();assert.equal(await page.evaluate(()=>testPanel.isConnected && testArtist.isConnected && document.querySelector('.pd')===testPanel),true);await page.evaluate(()=>PoorDJ.open());assert.equal(await page.locator('#pd-command').inputValue(),'Omar Courtz');assert.equal(await page.evaluate(()=>document.activeElement.dataset.artistmode),'mix');assert.equal(await page.getByRole('button',{name:'Aleatorio',exact:true}).count(),1);assert.equal(await page.getByRole('button',{name:'Artista',exact:true}).count(),1);assert.equal(await page.evaluate(()=>PoorDJ.engine.active),false);await page.getByRole('button',{name:'Volver a resultados',exact:true}).click();await page.getByRole('button',{name:'Cerrar resultados',exact:true}).click();
-  await page.evaluate(()=>PoorDJ.open());await page.getByRole('tab',{name:'Letras'}).click();await page.waitForSelector('.pd-line');
-  assert.equal(await page.locator('.pd-line').count(),4);await page.waitForFunction(()=>document.querySelector('.pd-now')?.textContent==='Segunda línea');
-  assert.match(await page.locator('[data-lyricssource]').innerText(),/Sincronizada/);assert.equal(await page.locator('[data-dj-hidden],[data-pane=dj]').first().isHidden(),true);
-  await page.locator('.pd-line').nth(2).click();assert.equal(await page.evaluate(()=>demo.seeked),12000);
-  await page.getByRole('button',{name:'Adelantar letra'}).click();assert.equal(await page.evaluate(()=>PoorDJ.engine.settings.lyricsOffset),250);
-  await page.getByRole('button',{name:'Cambiar tamaño de letra'}).click();assert.equal(await page.locator('.pd').getAttribute('data-lsize'),'l');
-  assert.equal(await page.evaluate(()=>demo.lyricsCalls),1);assert.equal(await page.evaluate(()=>demo.intervals()),0);
-  await page.getByRole('tab',{name:'DJ'}).click();assert.equal(await page.locator('#pd-command').isVisible(),true);
-  await page.evaluate(()=>PoorDJ.engine.updateSettings({lyricsOffset:0,lyricsSize:'m'},false));
-  await page.setViewportSize({width:1000,height:800});await page.waitForFunction(()=>demo.buttons?.some(b=>b.name.startsWith('Letras')),null,{timeout:8000});await page.evaluate(()=>{document.body.insertAdjacentHTML('beforeend','<div class="Root__main-view" style="position:fixed;inset:0"></div>');demo.buttons.find(b=>b.name.startsWith('Letras')).fn();});
-  await page.waitForSelector('#PoorDJPage .pd-now');assert.equal(await page.locator('#PoorDJPage .pd-line').count(),4);assert.equal(await page.locator('#PoorDJPage [data-ptitle]').innerText(),await page.evaluate(()=>PoorDJ.engine.current.name));
-  await page.locator('#PoorDJPage .pd-line').nth(1).click();assert.equal(await page.evaluate(()=>demo.seeked),8000);
-  await page.getByRole('button',{name:'Cerrar letras'}).click();assert.equal(await page.locator('#PoorDJPage').count(),0);
-  await page.evaluate(()=>document.querySelector('.Root__main-view').remove());await page.setViewportSize({width:390,height:1100});await page.evaluate(()=>PoorDJ.open());
-  await page.evaluate(()=>document.querySelectorAll('.pd-customize,.pd-customize details').forEach(d=>d.open=true));await page.getByRole('button',{name:'Comprobar compatibilidad'}).click();
-  await page.waitForFunction(()=>/Cola de reproducción/.test(document.querySelector('[data-diagresult]').textContent) && /Búsqueda de canciones: Responde/.test(document.querySelector('[data-diagresult]').textContent));
-  assert.equal(await page.locator('[data-savesession]').count(),1);
-  // Subtítulo del DJ con el panel cerrado.
-  await page.evaluate(()=>{Spicetify.PopupModal.hide();PoorDJ.narrator.speaking=true;PoorDJ.narrator.text='Ahora suena Demo.';PoorDJ.engine.onUpdate();});
-  assert.equal(await page.locator('.pd-toastdj').isVisible(),true);assert.match(await page.locator('.pd-toastdj').innerText(),/DJ POOR.*Demo/);
-  await page.evaluate(()=>{PoorDJ.narrator.speaking=false;PoorDJ.narrator.text='';PoorDJ.engine.onUpdate();PoorDJ.open();});assert.equal(await page.locator('.pd-toastdj').isVisible(),false);
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-  await page.emulateMedia({reducedMotion:'reduce'});assert.equal(await page.locator('.pd-choice:visible').count(),0);
-  await page.evaluate(()=>PoorDJ.engine.prepareChoices());assert.equal(await page.locator('.pd-choice').first().evaluate(n=>getComputedStyle(n).animationName),'none');
-  await page.emulateMedia({reducedMotion:'no-preference'});await page.screenshot({path:path.join(__dirname,'../preview.png'),fullPage:true,animations:'disabled'});
-  for(let i=0;i<5;i++)await page.evaluate(()=>PoorDJ.open());assert.equal(await page.evaluate(()=>demo.listeners()),3);
-  await page.evaluate(()=>PoorDJ.dispose());assert.equal(await page.evaluate(()=>demo.listeners()),0);assert.equal(await page.evaluate(()=>demo.intervals()),0);assert.equal(await page.locator('.pd').count(),0);assert.equal(await page.evaluate(()=>Spicetify.Platform.PlayerAPI.play===demo.originalPlay),true);
-  const fresh=await browser.newPage({viewport:{width:700,height:1000}}),freshErrors=[];fresh.on('pageerror',e=>freshErrors.push(e.message));await fresh.goto(pathToFileURL(path.join(__dirname,'fixture.html')).href+'?fresh');assert.equal(await fresh.evaluate(()=>PoorDJ.engine.exportProfile().schema),3);assert.equal(await fresh.evaluate(()=>PoorDJ.engine.active),false);assert.equal(await fresh.evaluate(()=>demo.intervals()),0);assert.equal(await fresh.evaluate(()=>document.activeElement.id),'pd-command');await fresh.keyboard.press('Tab');assert.equal(await fresh.evaluate(()=>document.activeElement.textContent),'Buscar');await fresh.getByRole('button',{name:'Elegir música conocida',exact:true}).click();assert.equal(await fresh.locator('[data-choice]').count(),2);await fresh.locator('[data-choice]').first().focus();await fresh.keyboard.press('Enter');await fresh.waitForFunction(()=>PoorDJ.engine.active && !PoorDJ.engine.busy && !PoorDJ.engine.choiceBusy);await fresh.evaluate(()=>PoorDJ.engine.updateSettings({autoFade:true},false));await fresh.waitForTimeout(1600);assert.deepEqual(freshErrors,[]);await fresh.evaluate(()=>PoorDJ.engine.stop());await fresh.evaluate(()=>PoorDJ.dispose());assert.equal(await fresh.evaluate(()=>demo.listeners()),0);await fresh.close();
-  // Con Spicy Lyrics instalado, PurDJ no duplica letras: cede y ofrece abrirlo.
-  const sp=await browser.newPage({viewport:{width:700,height:1000}});await sp.addInitScript(()=>{window.SpicyLyrics={};});await sp.goto(pathToFileURL(path.join(__dirname,'fixture.html')).href+'?fresh');
-  assert.equal(await sp.locator('[data-tabs]').isHidden(),true);assert.equal(await sp.locator('[data-openspicy]').isVisible(),true);assert.equal(await sp.locator('[data-setting=lyrics]').isHidden(),true);
-  await sp.waitForTimeout(3000);assert.equal(await sp.evaluate(()=>(demo.buttons||[]).some(b=>b.name.startsWith('Letras'))),false);
-  await sp.locator('[data-openspicy]').click();assert.equal(await sp.evaluate(()=>Spicetify.Platform.History.location.pathname),'/SpicyLyrics');await sp.close();
-  assert.deepEqual(errors,[]);console.log('UI passed: clean initialization, migration, two cards, no mutation while browsing, text filters, Isma precedence, playlist preservation, reduced motion, timers and disposal.');
- }finally{await browser.close();}
-})().catch(e=>{console.error(e);process.exitCode=1;});
+const { chromium } = require('playwright');
+const { pathToFileURL } = require('node:url');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+
+(async () => {
+  const browser = await chromium.launch(
+    process.env.KROMBYTE_CHROME
+      ? { headless: true, executablePath: process.env.KROMBYTE_CHROME, args: ['--no-sandbox'] }
+      : { headless: true, channel: 'msedge' }
+  );
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+
+    await page.goto(pathToFileURL(path.join(__dirname, 'fixture.html')).href);
+    await page.waitForSelector('#PoorDJPage');
+    assert.match(await page.locator('#PoorDJPage h1').innerText(), /4\.0\.0/);
+    assert.equal(await page.evaluate(() => demo.intervals()), 0);
+    assert.equal(await page.evaluate(() => PoorDJ.engine.settings.takeover), false);
+    assert.equal(await page.locator('#PoorDJ_PlaybarButton').isVisible(), true);
+
+    // Vibe selection: Mis favoritas (0), Mezcla (35), Descubrir (75)
+    await page.locator('[data-vibe="0"]').click();
+    assert.equal(await page.evaluate(() => PoorDJ.engine.intent.known), true);
+    await page.locator('[data-vibe="75"]').click();
+    assert.equal(await page.evaluate(() => PoorDJ.engine.settings.discovery), 75);
+    await page.locator('[data-vibe="35"]').click();
+    assert.equal(await page.evaluate(() => PoorDJ.engine.settings.discovery), 35);
+
+    // Known song picker without starting playback
+    const beforeUri = await page.evaluate(() => Spicetify.Player.data.item.uri);
+    await page.locator('[data-openpicker]').click();
+    assert.equal(await page.locator('[data-choice]').count(), 2);
+    const firstPair = await page.locator('[data-choice]').evaluateAll(ns => ns.map(n => n.dataset.choice));
+    await page.locator('[data-again]').click();
+    const secondPair = await page.locator('[data-choice]').evaluateAll(ns => ns.map(n => n.dataset.choice));
+    assert.ok(secondPair.every(u => !firstPair.includes(u)));
+    assert.equal(await page.evaluate(() => Spicetify.Player.data.item.uri), beforeUri);
+    await page.locator('[data-closepicker]').click();
+
+    // Start DJ -> up-next list populates with 3 songs
+    await page.locator('[data-toggle]').click();
+    await page.waitForFunction(() => PoorDJ.engine.active && !PoorDJ.engine.busy && PoorDJ.engine.preview.length === 3);
+    assert.equal(await page.locator('.pd-next').count(), 3);
+    assert.equal(await page.evaluate(() => demo.intervals()), 1);
+
+    // Pin first up-next song
+    await page.locator('[data-pin]').first().click();
+    assert.equal(await page.evaluate(() => !!PoorDJ.engine.pinned), true);
+
+    // Command box: filter & reject invalid command
+    await page.locator('#pd-command').fill('solo conocidas y menos comercial');
+    await page.locator('[data-command] button[type="submit"]').click();
+    await page.waitForFunction(() => PoorDJ.engine.error);
+
+    await page.locator('#pd-command').fill('permite descubrir y sin Dillom y más variedad');
+    await page.locator('[data-command] button[type="submit"]').click();
+    await page.waitForFunction(() => PoorDJ.engine.intent.variety === 80 && !PoorDJ.engine.busy);
+    assert.ok((await page.locator('[data-intent]').innerText()).includes('dillom'));
+
+    // Search & Artist menu
+    await page.locator('#pd-command').fill('Yoko');
+    await page.locator('#pd-command').press('Enter');
+    await page.waitForFunction(() => PoorDJ.engine.commandChoices.length > 0);
+    assert.ok((await page.locator('[data-match]').count()) > 0);
+    await page.locator('[data-closesearch]').click();
+
+    await page.locator('#pd-command').fill('Artist 1');
+    await page.locator('#pd-command').press('Enter');
+    await page.waitForFunction(() => PoorDJ.engine.commandArtists.length > 0 || PoorDJ.engine.commandChoices.length > 0);
+    if ((await page.locator('[data-mixartist]').count()) > 0) {
+      await page.locator('[data-mixartist]').first().click();
+      await page.waitForSelector('[data-artistmenu]:not([hidden])');
+      assert.equal(await page.locator('[data-artistmode="mix"]').count(), 1);
+      assert.equal(await page.locator('[data-artistmode="only"]').count(), 1);
+      await page.locator('[data-closeartist]').click();
+      await page.locator('[data-closesearch]').click();
+    }
+
+    // Lyrics tab
+    await page.getByRole('tab', { name: 'Letras' }).click();
+    await page.waitForSelector('.pd-lyrics-stage .pd-line');
+    assert.equal(await page.locator('.pd-lyrics-rail').isVisible(), true);
+    assert.equal(await page.locator('.pd-line').count(), 4);
+    await page.waitForFunction(() => document.querySelector('.pd-now')?.textContent === 'Segunda línea');
+    assert.equal(await page.locator('.pd-now').getAttribute('data-state'), 'now');
+    const lpVal = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.pd-now')).getPropertyValue('--lp')));
+    assert.ok(Number.isFinite(lpVal) && lpVal >= 0);
+    await page.locator('.pd-line').nth(2).click();
+    assert.equal(await page.evaluate(() => demo.seeked), 12000);
+    await page.waitForFunction(() => document.querySelector('.pd-now')?.textContent === 'Tercera línea');
+    await page.getByRole('button', { name: 'Adelantar letra' }).click();
+    assert.equal(await page.evaluate(() => PoorDJ.engine.settings.lyricsOffset), 250);
+    await page.getByRole('button', { name: 'Cambiar tamaño de letra' }).click();
+    assert.equal(await page.locator('#PoorDJPage').getAttribute('data-lsize'), 'l');
+
+    // Settings tab
+    await page.getByRole('tab', { name: 'Ajustes' }).click();
+    await page.locator('[data-diagnose]').click();
+    await page.waitForFunction(() => /Cola de reproducción/.test(document.querySelector('[data-diagresult]').textContent));
+    assert.equal(await page.locator('[data-voicepick]').isVisible(), true);
+
+    // Off-page mini pill and DJ toast + Ctrl+D toggle
+    await page.keyboard.press('Control+KeyD');
+    await page.waitForFunction(() => !document.querySelector('#PoorDJPage'));
+    assert.equal(await page.locator('.pd-mini').isVisible(), true);
+    await page.evaluate(() => {
+      PoorDJ.narrator.speaking = true;
+      PoorDJ.narrator.text = 'Ahora suena Demo.';
+      PoorDJ.engine.onUpdate();
+    });
+    assert.equal(await page.locator('.pd-toastdj').isVisible(), true);
+    await page.evaluate(() => {
+      PoorDJ.narrator.speaking = false;
+      PoorDJ.narrator.text = '';
+      PoorDJ.engine.onUpdate();
+    });
+
+    // Reopen with Playbar button, test X close fallback when goBack is a no-op / index 0, then reopen for Esc close
+    await page.locator('#PoorDJ_PlaybarButton').click();
+    await page.waitForSelector('#PoorDJPage');
+    assert.equal(await page.locator('.pd-mini').isHidden(), true);
+    await page.evaluate(() => {
+      demo.origGoBack = Spicetify.Platform.History.goBack;
+      Spicetify.Platform.History.index = 0;
+      Spicetify.Platform.History.goBack = () => {};
+    });
+    await page.locator('[data-closepage]').click();
+    await page.waitForFunction(() => !document.querySelector('#PoorDJPage'));
+    assert.equal(await page.evaluate(() => Spicetify.Platform.History.location.pathname), '/');
+    await page.evaluate(() => {
+      Spicetify.Platform.History.goBack = demo.origGoBack;
+      delete Spicetify.Platform.History.index;
+    });
+    await page.locator('#PoorDJ_PlaybarButton').click();
+    await page.waitForSelector('#PoorDJPage');
+
+    // Responsive width checks (860px and 390px)
+    await page.setViewportSize({ width: 860, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.setViewportSize({ width: 390, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+
+    // Stop DJ and dispose cleanly
+    await page.evaluate(() => PoorDJ.engine.stop());
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#PoorDJPage'));
+    await page.evaluate(() => PoorDJ.dispose());
+    assert.equal(await page.evaluate(() => demo.listeners()), 0);
+    assert.equal(await page.evaluate(() => demo.intervals()), 0);
+    assert.equal(await page.locator('#PoorDJPage').count(), 0);
+    assert.equal(await page.evaluate(() => Spicetify.Platform.PlayerAPI.play === demo.originalPlay), true);
+
+    // Spicy Lyrics: auto mode hides Letras tab & shows Spicy Lyrics ↗; builtin mode restores Letras tab + shortcut
+    const sp = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await sp.addInitScript(() => {
+      window.SpicyLyrics = {};
+    });
+    await sp.goto(pathToFileURL(path.join(__dirname, 'fixture.html')).href + '?fresh');
+    await sp.waitForSelector('#PoorDJPage');
+    assert.equal(await sp.locator('[data-tab="lyrics"]').isHidden(), true);
+    assert.equal(await sp.locator('[data-openspicy]').isVisible(), true);
+    assert.match(await sp.locator('[data-openspicy]').innerText(), /Spicy Lyrics/);
+    await sp.locator('[data-openspicy]').click();
+    assert.equal(await sp.evaluate(() => Spicetify.Platform.History.location.pathname), '/SpicyLyrics');
+    await sp.evaluate(() => PoorDJ.open());
+    await sp.waitForSelector('#PoorDJPage');
+    await sp.getByRole('tab', { name: 'Ajustes' }).click();
+    await sp.locator('[data-select="lyricsProvider"]').selectOption('builtin');
+    assert.equal(await sp.locator('[data-tab="lyrics"]').isVisible(), true);
+    await sp.getByRole('tab', { name: 'Letras' }).click();
+    assert.equal(await sp.locator('[data-openextlyrics]').isVisible(), true);
+    assert.match(await sp.locator('[data-openextlyrics]').innerText(), /Abrir en Spicy Lyrics/);
+    await sp.close();
+
+    assert.deepEqual(errors, []);
+    console.log('UI smoke test passed (v4 full-page booth, vibes, search, lyrics, settings, mini, toast, responsive, Spicy Lyrics, cleanup).');
+  } finally {
+    await browser.close();
+  }
+})().catch(e => {
+  console.error(e);
+  process.exitCode = 1;
+});

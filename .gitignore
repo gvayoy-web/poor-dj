@@ -11,3 +11,8 @@ live-*.json
 *.bak
 *profile*.json
 *probe*.json
+voice/.venv/
+voice/voices/
+voice/samples/
+voice/*.log
+surround/

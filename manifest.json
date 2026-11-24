@@ -1,6 +1,6 @@
 {
   "name": "POOR DJ",
-  "description": "Tu música, tu dirección. DJ local con canciones conocidas, órdenes por texto y voz local en español.",
+  "description": "Tu música. Tu mando. Cabina de DJ local para Spotify con mezcla inteligente, radio, letras sincronizadas y voz neuronal en español.",
   "preview": "preview.png",
   "main": "poor-mans-dj.js",
   "readme": "README.md",
